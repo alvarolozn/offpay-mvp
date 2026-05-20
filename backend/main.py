@@ -2,6 +2,7 @@ import os
 import time
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
 from psycopg2.extras import Json
@@ -39,6 +40,19 @@ APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION
+)
+
+
+# ============================================================
+# CORS — permite que el panel admin consulte el backend
+# desde cualquier origen (ngrok, Vercel, localhost, etc.)
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
@@ -91,6 +105,9 @@ class RefundTokenRequest(BaseModel):
     payment_code: str
 
 
+class DemoLoginRequest(BaseModel):
+    username: str
+    role: str
 # ============================================================
 # ENDPOINT PRINCIPAL
 # ============================================================
@@ -169,6 +186,68 @@ def db_test():
 # ============================================================
 # REGISTRO DE CLIENTES
 # ============================================================
+@app.post("/auth/demo-login")
+def demo_login(data: DemoLoginRequest):
+    """
+    Login demo mínimo por username + role.
+
+    Busca en la tabla demo_users un usuario activo
+    que coincida con el username y el rol enviados.
+    """
+
+    username = data.username.strip()
+    role = data.role.strip().upper()
+
+    if not username:
+        raise HTTPException(
+            status_code=400,
+            detail="El username es obligatorio"
+        )
+
+    if role not in {"CLIENT", "SELLER", "ADMIN"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Rol inválido"
+        )
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select
+                    id,
+                    username,
+                    full_name,
+                    role,
+                    linked_user_id,
+                    is_active,
+                    created_at
+                from demo_users
+                where lower(username) = lower(%s)
+                  and role = %s
+                limit 1
+                """,
+                (username, role)
+            )
+
+            user = cur.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "message": "Usuario no encontrado"
+                }
+
+            if not user["is_active"]:
+                return {
+                    "success": False,
+                    "message": "Usuario inactivo"
+                }
+
+            return {
+                "success": True,
+                "user": dict(user)
+            }
 
 @app.post("/clients/register")
 def register_client(data: RegisterClientRequest):
@@ -739,6 +818,54 @@ def generate_tokens(data: GenerateTokensRequest):
 # ============================================================
 # DEVOLVER TOKEN NO UTILIZADO
 # ============================================================
+
+# ============================================================
+# OBTENER TOKENS DE UN CLIENTE
+# ============================================================
+
+@app.get("/tokens/client/{client_id}")
+def get_client_tokens(client_id: str):
+    """
+    Retorna todos los tokens de un cliente específico,
+    ordenados por fecha de creación descendente.
+    """
+    clean_id = client_id.strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select
+                    id,
+                    client_id,
+                    counter,
+                    payment_code,
+                    token_hash,
+                    value_cop,
+                    status,
+                    blockchain_status,
+                    chain_id,
+                    created_at,
+                    used_at,
+                    returned_at
+                from tokens
+                where client_id = %s
+                order by created_at desc
+                """,
+                (clean_id,)
+            )
+            rows = cur.fetchall()
+
+            if not rows:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No se encontraron tokens para este cliente"
+                )
+
+            return {
+                "client_id": clean_id,
+                "tokens": [dict(row) for row in rows]
+            }
 
 @app.post("/tokens/refund")
 def refund_token(data: RefundTokenRequest):

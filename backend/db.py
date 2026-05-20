@@ -1,4 +1,4 @@
-```python id="r49107"
+
 import os
 from contextlib import contextmanager
 
@@ -42,4 +42,3 @@ def get_conn():
     finally:
         # Cierra la conexión automáticamente
         conn.close()
-```
