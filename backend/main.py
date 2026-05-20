@@ -91,6 +91,9 @@ class RefundTokenRequest(BaseModel):
     payment_code: str
 
 
+class DemoLoginRequest(BaseModel):
+    username: str
+    role: str
 # ============================================================
 # ENDPOINT PRINCIPAL
 # ============================================================
@@ -169,6 +172,68 @@ def db_test():
 # ============================================================
 # REGISTRO DE CLIENTES
 # ============================================================
+@app.post("/auth/demo-login")
+def demo_login(data: DemoLoginRequest):
+    """
+    Login demo mínimo por username + role.
+
+    Busca en la tabla demo_users un usuario activo
+    que coincida con el username y el rol enviados.
+    """
+
+    username = data.username.strip()
+    role = data.role.strip().upper()
+
+    if not username:
+        raise HTTPException(
+            status_code=400,
+            detail="El username es obligatorio"
+        )
+
+    if role not in {"CLIENT", "SELLER", "ADMIN"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Rol inválido"
+        )
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select
+                    id,
+                    username,
+                    full_name,
+                    role,
+                    linked_user_id,
+                    is_active,
+                    created_at
+                from demo_users
+                where lower(username) = lower(%s)
+                  and role = %s
+                limit 1
+                """,
+                (username, role)
+            )
+
+            user = cur.fetchone()
+
+            if not user:
+                return {
+                    "success": False,
+                    "message": "Usuario no encontrado"
+                }
+
+            if not user["is_active"]:
+                return {
+                    "success": False,
+                    "message": "Usuario inactivo"
+                }
+
+            return {
+                "success": True,
+                "user": dict(user)
+            }
 
 @app.post("/clients/register")
 def register_client(data: RegisterClientRequest):
@@ -739,6 +804,49 @@ def generate_tokens(data: GenerateTokensRequest):
 # ============================================================
 # DEVOLVER TOKEN NO UTILIZADO
 # ============================================================
+
+# ============================================================
+# OBTENER TOKENS DE UN CLIENTE
+# ============================================================
+
+@app.get("/tokens/client/{client_id}")
+def get_client_tokens(client_id: str):
+    """
+    Retorna todos los tokens de un cliente,
+    ordenados por counter ascendente.
+    """
+
+    clean_client_id = client_id.strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select
+                    id,
+                    client_id,
+                    counter,
+                    payment_code,
+                    token_hash,
+                    value_cop,
+                    status,
+                    blockchain_status,
+                    created_at,
+                    used_at,
+                    returned_at
+                from tokens
+                where client_id = %s
+                order by counter asc
+                """,
+                (clean_client_id,)
+            )
+
+            rows = cur.fetchall()
+
+            return {
+                "client_id": clean_client_id,
+                "tokens": [dict(row) for row in rows]
+            }
 
 @app.post("/tokens/refund")
 def refund_token(data: RefundTokenRequest):

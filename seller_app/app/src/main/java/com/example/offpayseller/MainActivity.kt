@@ -71,6 +71,7 @@ fun OffPayApp() {
         )
     }
 
+    // Se dejan por compatibilidad con ConfigScreen.
     var clientId by remember {
         mutableStateOf(
             prefs.getString("client_id", "89ffc7fe-3ee7-4e74-82db-0aa441fff6e0")
@@ -85,23 +86,67 @@ fun OffPayApp() {
         )
     }
 
+    var loggedFullName by remember { mutableStateOf("") }
+    var loggedRole by remember { mutableStateOf("") }
+    var loggedLinkedUserId by remember { mutableStateOf("") }
+
+    fun clearDemoSession() {
+        loggedFullName = ""
+        loggedRole = ""
+        loggedLinkedUserId = ""
+    }
+
     when (currentScreen) {
         "home" -> HomeScreen(
-            onClienteClick = { currentScreen = "cliente" },
-            onVendedorClick = { currentScreen = "vendedor" },
+            onClienteClick = { currentScreen = "login_client" },
+            onVendedorClick = { currentScreen = "login_seller" },
             onConfigClick = { currentScreen = "config" }
+        )
+
+        "login_client" -> DemoLoginScreen(
+            backendUrl = backendUrl,
+            role = "CLIENT",
+            title = "Login Cliente",
+            exampleUsername = "cliente1",
+            onLoginSuccess = { fullName, linkedUserId ->
+                loggedFullName = fullName
+                loggedRole = "CLIENT"
+                loggedLinkedUserId = linkedUserId
+                currentScreen = "cliente"
+            },
+            onBack = { currentScreen = "home" }
+        )
+
+        "login_seller" -> DemoLoginScreen(
+            backendUrl = backendUrl,
+            role = "SELLER",
+            title = "Login Vendedor",
+            exampleUsername = "vendedor1",
+            onLoginSuccess = { fullName, linkedUserId ->
+                loggedFullName = fullName
+                loggedRole = "SELLER"
+                loggedLinkedUserId = linkedUserId
+                currentScreen = "vendedor"
+            },
+            onBack = { currentScreen = "home" }
         )
 
         "cliente" -> ClienteScreen(
             backendUrl = backendUrl,
-            clientId = clientId,
-            onBack = { currentScreen = "home" }
+            clientId = loggedLinkedUserId,
+            onBack = {
+                clearDemoSession()
+                currentScreen = "home"
+            }
         )
 
         "vendedor" -> VendedorScreen(
             backendUrl = backendUrl,
-            sellerId = sellerId,
-            onBack = { currentScreen = "home" }
+            sellerId = loggedLinkedUserId,
+            onBack = {
+                clearDemoSession()
+                currentScreen = "home"
+            }
         )
 
         "config" -> ConfigScreen(
@@ -176,6 +221,175 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Configuración")
+        }
+    }
+}
+@Composable
+fun DemoLoginScreen(
+    backendUrl: String,
+    role: String,
+    title: String,
+    exampleUsername: String,
+    onLoginSuccess: (String, String) -> Unit,
+    onBack: () -> Unit
+) {
+    var username by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf("Ingresa tu username demo.") }
+
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+
+    fun doDemoLogin() {
+        val cleanUsername = username.trim()
+
+        if (cleanUsername.isBlank()) {
+            statusMessage = "Debes ingresar un username."
+            return
+        }
+
+        loading = true
+        statusMessage = "Validando usuario..."
+
+        thread {
+            try {
+                val url = URL("${backendUrl.trim()}/auth/demo-login")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 30000
+                connection.readTimeout = 30000
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                connection.setRequestProperty("Accept", "application/json")
+
+                val requestBody = JSONObject().apply {
+                    put("username", cleanUsername)
+                    put("role", role)
+                }.toString()
+
+                BufferedWriter(OutputStreamWriter(connection.outputStream, "UTF-8")).use { writer ->
+                    writer.write(requestBody)
+                    writer.flush()
+                }
+
+                val responseCode = connection.responseCode
+                val responseText = if (responseCode in 200..299) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                }
+
+                if (responseCode !in 200..299) {
+                    mainHandler.post {
+                        loading = false
+                        statusMessage = "Error HTTP: $responseCode"
+                    }
+                    return@thread
+                }
+
+                val obj = JSONObject(responseText)
+                val success = obj.optBoolean("success", false)
+
+                if (!success) {
+                    val message = obj.optString("message", "Login inválido")
+                    mainHandler.post {
+                        loading = false
+                        statusMessage = message
+                    }
+                    return@thread
+                }
+
+                val user = obj.getJSONObject("user")
+                val fullName = user.optString("full_name", "")
+                val linkedUserId = user.optString("linked_user_id", "")
+
+                if (linkedUserId.isBlank()) {
+                    mainHandler.post {
+                        loading = false
+                        statusMessage = "El usuario no tiene linked_user_id válido."
+                    }
+                    return@thread
+                }
+
+                mainHandler.post {
+                    loading = false
+                    statusMessage = "Login correcto"
+                    onLoginSuccess(fullName, linkedUserId)
+                }
+
+            } catch (e: Exception) {
+                mainHandler.post {
+                    loading = false
+                    statusMessage = "Error de conexión: ${e.message}"
+                }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Rol esperado: $role",
+            style = MaterialTheme.typography.bodyLarge
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Username de prueba: $exampleUsername",
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Username") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = { doDemoLogin() },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (loading) "Ingresando..." else "Ingresar")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Estado", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(statusMessage)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Volver")
         }
     }
 }
