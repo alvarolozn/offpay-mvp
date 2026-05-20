@@ -15,23 +15,45 @@ from token_service import (
     normalize_payment_code,
 )
 
+# ============================================================
+# CARGA DE VARIABLES DE ENTORNO
+# ============================================================
+
+# Carga automáticamente las variables definidas en el archivo .env
 load_dotenv()
 
+# Obtiene el nombre de la aplicación desde las variables de entorno.
+# Si no existe, usa "OffPay MVP API" por defecto.
 APP_NAME = os.getenv("APP_NAME", "OffPay MVP API")
+
+# Obtiene la versión de la aplicación desde el .env.
+# Si no existe, usa "1.0.0" por defecto.
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 
+
+# ============================================================
+# CONFIGURACIÓN DE FASTAPI
+# ============================================================
+
+# Inicializa la aplicación FastAPI
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION
 )
 
 
+# ============================================================
+# MODELOS DE VALIDACIÓN (PYDANTIC)
+# ============================================================
+
+# Modelo utilizado para registrar clientes
 class RegisterClientRequest(BaseModel):
     full_name: str
     email: EmailStr
     password: str
 
 
+# Modelo utilizado para registrar vendedores
 class RegisterSellerRequest(BaseModel):
     full_name: str
     email: EmailStr
@@ -39,38 +61,68 @@ class RegisterSellerRequest(BaseModel):
     commerce_name: str
 
 
+# Modelo utilizado para recargar saldo
 class RechargeRequest(BaseModel):
     user_id: str
     amount_cop: int
 
 
+# Modelo utilizado para generar tokens
 class GenerateTokensRequest(BaseModel):
     client_id: str
     amount_cop: int
 
 
+# Modelo utilizado para validar pagos individuales
 class ValidatePaymentRequest(BaseModel):
     seller_id: str
     payment_code: str
 
+
+# Modelo utilizado para validar pagos por paquete
 class ValidatePackagePaymentRequest(BaseModel):
     seller_id: str
     payment_codes: list[str]
 
+
+# Modelo utilizado para devolver tokens no usados
 class RefundTokenRequest(BaseModel):
     client_id: str
     payment_code: str
 
+
+# ============================================================
+# ENDPOINT PRINCIPAL
+# ============================================================
+
 @app.get("/")
 def root():
+    """
+    Endpoint principal de la API.
+
+    Retorna un mensaje indicando que
+    el backend está funcionando.
+    """
     return {
         "message": "Backend de OffPay funcionando",
         "docs": "/docs"
     }
 
 
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
 @app.get("/health")
 def health():
+    """
+    Endpoint para verificar el estado de la API.
+
+    Retorna:
+    - Estado general
+    - Nombre de la app
+    - Versión actual
+    """
     return {
         "status": "ok",
         "app": APP_NAME,
@@ -78,12 +130,27 @@ def health():
     }
 
 
+# ============================================================
+# PRUEBA DE CONEXIÓN A BASE DE DATOS
+# ============================================================
+
 @app.get("/db-test")
 def db_test():
+    """
+    Verifica que PostgreSQL/Supabase
+    esté funcionando correctamente.
+    """
     try:
+        # Abre conexión con PostgreSQL
         with get_conn() as conn:
+
+            # Abre cursor SQL
             with conn.cursor() as cur:
+
+                # Ejecuta consulta simple
                 cur.execute("select now() as server_time;")
+
+                # Obtiene resultado
                 result = cur.fetchone()
 
         return {
@@ -93,11 +160,22 @@ def db_test():
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error conectando a la base de datos: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error conectando a la base de datos: {str(e)}"
+        )
 
+
+# ============================================================
+# REGISTRO DE CLIENTES
+# ============================================================
 
 @app.post("/clients/register")
 def register_client(data: RegisterClientRequest):
+    """
+    Registra un nuevo cliente.
+    """
+
     return _register_user(
         full_name=data.full_name,
         email=data.email,
@@ -107,8 +185,16 @@ def register_client(data: RegisterClientRequest):
     )
 
 
+# ============================================================
+# REGISTRO DE VENDEDORES
+# ============================================================
+
 @app.post("/sellers/register")
 def register_seller(data: RegisterSellerRequest):
+    """
+    Registra un nuevo vendedor.
+    """
+
     return _register_user(
         full_name=data.full_name,
         email=data.email,
@@ -118,33 +204,94 @@ def register_seller(data: RegisterSellerRequest):
     )
 
 
-def _register_user(full_name: str, email: str, password: str, role: str, commerce_name: str | None):
+# ============================================================
+# FUNCIÓN INTERNA DE REGISTRO
+# ============================================================
+
+def _register_user(
+    full_name: str,
+    email: str,
+    password: str,
+    role: str,
+    commerce_name: str | None
+):
+    """
+    Función reutilizable para registrar usuarios.
+
+    Esta función:
+    1. Hashea la contraseña
+    2. Inserta el perfil del usuario
+    3. Crea automáticamente su wallet
+    """
+
+    # Genera hash seguro de la contraseña
     password_hash = hash_password(password)
 
+    # Abre conexión con la base de datos
     with get_conn() as conn:
+
         try:
             with conn.cursor() as cur:
+
+                # ====================================================
+                # INSERTAR PERFIL
+                # ====================================================
+
                 cur.execute(
                     """
-                    insert into profiles(email, password_hash, full_name, role, commerce_name)
+                    insert into profiles(
+                        email,
+                        password_hash,
+                        full_name,
+                        role,
+                        commerce_name
+                    )
                     values (%s, %s, %s, %s, %s)
-                    returning id, email, full_name, role, commerce_name
+
+                    returning
+                        id,
+                        email,
+                        full_name,
+                        role,
+                        commerce_name
                     """,
-                    (email, password_hash, full_name, role, commerce_name)
+                    (
+                        email,
+                        password_hash,
+                        full_name,
+                        role,
+                        commerce_name
+                    )
                 )
 
+                # Obtiene usuario recién creado
                 user = cur.fetchone()
+
+                # ====================================================
+                # CREAR WALLET INICIAL
+                # ====================================================
 
                 cur.execute(
                     """
-                    insert into wallets(user_id, available_balance_cop, blocked_balance_cop)
+                    insert into wallets(
+                        user_id,
+                        available_balance_cop,
+                        blocked_balance_cop
+                    )
                     values (%s, 0, 0)
-                    returning id, available_balance_cop, blocked_balance_cop
+
+                    returning
+                        id,
+                        available_balance_cop,
+                        blocked_balance_cop
                     """,
                     (user["id"],)
                 )
 
+                # Obtiene wallet creada
                 wallet = cur.fetchone()
+
+                # Guarda cambios
                 conn.commit()
 
                 return {
@@ -154,16 +301,34 @@ def _register_user(full_name: str, email: str, password: str, role: str, commerc
                 }
 
         except Exception as e:
-            conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
 
+            # Revierte cambios si ocurre error
+            conn.rollback()
+
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+
+
+# ============================================================
+# OBTENER WALLET
+# ============================================================
 
 @app.get("/wallets/{user_id}")
 def get_wallet(user_id: str):
+    """
+    Obtiene la información de la wallet
+    de un usuario específico.
+    """
+
+    # Elimina espacios extra
     clean_user_id = user_id.strip()
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+
+            # Consulta información de wallet + perfil
             cur.execute(
                 """
                 select 
@@ -174,8 +339,12 @@ def get_wallet(user_id: str):
                     p.commerce_name,
                     w.available_balance_cop,
                     w.blocked_balance_cop
+
                 from wallets w
-                join profiles p on p.id = w.user_id
+
+                join profiles p
+                    on p.id = w.user_id
+
                 where w.user_id = %s
                 """,
                 (clean_user_id,)
@@ -183,51 +352,108 @@ def get_wallet(user_id: str):
 
             wallet = cur.fetchone()
 
+            # Si no existe wallet
             if not wallet:
-                raise HTTPException(status_code=404, detail="Wallet no encontrada")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Wallet no encontrada"
+                )
 
             return dict(wallet)
 
 
+# ============================================================
+# RECARGAR WALLET
+# ============================================================
+
 @app.post("/wallets/recharge")
 def recharge_wallet(data: RechargeRequest):
+
+    # Valida monto
     if data.amount_cop <= 0:
-        raise HTTPException(status_code=400, detail="El monto debe ser mayor a cero")
+        raise HTTPException(
+            status_code=400,
+            detail="El monto debe ser mayor a cero"
+        )
 
     with get_conn() as conn:
+
         try:
             with conn.cursor() as cur:
+
+                # ====================================================
+                # BLOQUEA WALLET
+                # ====================================================
+
                 cur.execute(
                     "select * from wallets where user_id = %s for update",
                     (data.user_id.strip(),)
                 )
+
                 wallet = cur.fetchone()
 
                 if not wallet:
-                    raise HTTPException(status_code=404, detail="Wallet no encontrada")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Wallet no encontrada"
+                    )
+
+                # ====================================================
+                # CALCULA NUEVOS SALDOS
+                # ====================================================
 
                 before = wallet["available_balance_cop"]
                 after = before + data.amount_cop
 
+                # ====================================================
+                # ACTUALIZA WALLET
+                # ====================================================
+
                 cur.execute(
                     """
                     update wallets
-                    set available_balance_cop = %s, updated_at = now()
+
+                    set
+                        available_balance_cop = %s,
+                        updated_at = now()
+
                     where user_id = %s
+
                     returning *
                     """,
-                    (after, data.user_id.strip())
+                    (
+                        after,
+                        data.user_id.strip()
+                    )
                 )
 
                 updated_wallet = cur.fetchone()
 
+                # ====================================================
+                # REGISTRA MOVIMIENTO
+                # ====================================================
+
                 cur.execute(
                     """
                     insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop, description
+                        wallet_id,
+                        user_id,
+                        movement_type,
+                        amount_cop,
+                        balance_before_cop,
+                        balance_after_cop,
+                        description
                     )
-                    values (%s, %s, 'RECHARGE', %s, %s, %s, %s)
+
+                    values (
+                        %s,
+                        %s,
+                        'RECHARGE',
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
                     """,
                     (
                         wallet["id"],
@@ -239,6 +465,7 @@ def recharge_wallet(data: RechargeRequest):
                     )
                 )
 
+                # Guarda cambios
                 conn.commit()
 
                 return {
@@ -247,65 +474,142 @@ def recharge_wallet(data: RechargeRequest):
                 }
 
         except HTTPException:
+
             conn.rollback()
             raise
-        except Exception as e:
-            conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
 
+        except Exception as e:
+
+            conn.rollback()
+
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+
+# ============================================================
+# GENERAR TOKENS
+# ============================================================
 
 @app.post("/tokens/generate")
 def generate_tokens(data: GenerateTokensRequest):
+
+    # Limpia espacios
     client_id = data.client_id.strip()
 
+    # ========================================================
+    # VALIDACIONES
+    # ========================================================
+
     if data.amount_cop <= 0:
-        raise HTTPException(status_code=400, detail="El monto debe ser mayor a cero")
+        raise HTTPException(
+            status_code=400,
+            detail="El monto debe ser mayor a cero"
+        )
 
     if data.amount_cop % 10000 != 0:
-        raise HTTPException(status_code=400, detail="El monto debe ser múltiplo de 10000 COP")
+        raise HTTPException(
+            status_code=400,
+            detail="El monto debe ser múltiplo de 10000 COP"
+        )
 
+    # Cantidad de tokens a generar
     token_count = data.amount_cop // 10000
 
     with get_conn() as conn:
+
         try:
             with conn.cursor() as cur:
+
+                # ====================================================
+                # BLOQUEA WALLET
+                # ====================================================
+
                 cur.execute(
                     "select * from wallets where user_id = %s for update",
                     (client_id,)
                 )
+
                 wallet = cur.fetchone()
 
                 if not wallet:
-                    raise HTTPException(status_code=404, detail="Wallet no encontrada")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Wallet no encontrada"
+                    )
 
+                # Verifica saldo suficiente
                 if wallet["available_balance_cop"] < data.amount_cop:
-                    raise HTTPException(status_code=400, detail="Saldo disponible insuficiente")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Saldo disponible insuficiente"
+                    )
+
+                # ====================================================
+                # CALCULA NUEVOS SALDOS
+                # ====================================================
 
                 available_before = wallet["available_balance_cop"]
-                available_after = available_before - data.amount_cop
-                blocked_after = wallet["blocked_balance_cop"] + data.amount_cop
+
+                available_after = (
+                    available_before - data.amount_cop
+                )
+
+                blocked_after = (
+                    wallet["blocked_balance_cop"] + data.amount_cop
+                )
+
+                # ====================================================
+                # ACTUALIZA WALLET
+                # ====================================================
 
                 cur.execute(
                     """
                     update wallets
-                    set available_balance_cop = %s,
+
+                    set
+                        available_balance_cop = %s,
                         blocked_balance_cop = %s,
                         updated_at = now()
+
                     where user_id = %s
+
                     returning *
                     """,
-                    (available_after, blocked_after, client_id)
+                    (
+                        available_after,
+                        blocked_after,
+                        client_id
+                    )
                 )
 
                 updated_wallet = cur.fetchone()
 
+                # ====================================================
+                # REGISTRA MOVIMIENTO
+                # ====================================================
+
                 cur.execute(
                     """
                     insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop, description
+                        wallet_id,
+                        user_id,
+                        movement_type,
+                        amount_cop,
+                        balance_before_cop,
+                        balance_after_cop,
+                        description
                     )
-                    values (%s, %s, 'BLOCK_BALANCE', %s, %s, %s, %s)
+
+                    values (
+                        %s,
+                        %s,
+                        'BLOCK_BALANCE',
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
                     """,
                     (
                         wallet["id"],
@@ -317,19 +621,37 @@ def generate_tokens(data: GenerateTokensRequest):
                     )
                 )
 
+                # Lista donde se almacenan los tokens generados
                 generated_tokens = []
 
+                # ====================================================
+                # GENERACIÓN DE TOKENS
+                # ====================================================
+
                 for _ in range(token_count):
+
+                    # Obtiene siguiente contador
                     cur.execute(
-                        "select coalesce(max(counter), 0) + 1 as next_counter from tokens where client_id = %s",
+                        """
+                        select coalesce(max(counter), 0) + 1 as next_counter
+                        from tokens
+                        where client_id = %s
+                        """,
                         (client_id,)
                     )
+
                     counter = cur.fetchone()["next_counter"]
 
+                    # Genera código de pago
                     payment_code = generate_payment_code()
+
+                    # Genera hash del código
                     token_hash = hash_payment_code(payment_code)
+
+                    # Firma criptográfica
                     signature = make_signature(token_hash)
 
+                    # Payload QR
                     qr_payload = {
                         "version": "OP1",
                         "payment_code": payment_code,
@@ -337,15 +659,45 @@ def generate_tokens(data: GenerateTokensRequest):
                         "value_cop": 10000
                     }
 
+                    # Inserta token
                     cur.execute(
                         """
                         insert into tokens(
-                            client_id, counter, payment_code, signature, token_hash,
-                            value_cop, status, blockchain_status, chain_id, qr_payload
+                            client_id,
+                            counter,
+                            payment_code,
+                            signature,
+                            token_hash,
+                            value_cop,
+                            status,
+                            blockchain_status,
+                            chain_id,
+                            qr_payload
                         )
-                        values (%s, %s, %s, %s, %s, 10000, 'AVAILABLE', 'PENDING', 80002, %s)
-                        returning id, client_id, counter, payment_code, token_hash,
-                                  value_cop, status, blockchain_status, created_at
+
+                        values (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            10000,
+                            'AVAILABLE',
+                            'PENDING',
+                            80002,
+                            %s
+                        )
+
+                        returning
+                            id,
+                            client_id,
+                            counter,
+                            payment_code,
+                            token_hash,
+                            value_cop,
+                            status,
+                            blockchain_status,
+                            created_at
                         """,
                         (
                             client_id,
@@ -358,8 +710,10 @@ def generate_tokens(data: GenerateTokensRequest):
                     )
 
                     token = cur.fetchone()
+
                     generated_tokens.append(dict(token))
 
+                # Guarda cambios
                 conn.commit()
 
                 return {
@@ -369,368 +723,182 @@ def generate_tokens(data: GenerateTokensRequest):
                 }
 
         except HTTPException:
+
             conn.rollback()
             raise
+
         except Exception as e:
+
             conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
 
-
-@app.get("/tokens/client/{client_id}")
-def get_client_tokens(client_id: str):
-    clean_client_id = client_id.strip()
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select id, client_id, counter, payment_code, token_hash, value_cop,
-                       status, blockchain_status, created_at, used_at, returned_at
-                from tokens
-                where client_id = %s
-                order by counter asc
-                """,
-                (clean_client_id,)
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
             )
 
-            tokens = cur.fetchall()
-
-            return {
-                "client_id": clean_client_id,
-                "tokens": [dict(token) for token in tokens]
-            }
-
-
-@app.post("/payments/validate")
-def validate_payment(data: ValidatePaymentRequest):
-    start = time.perf_counter()
-    seller_id = data.seller_id.strip()
-    payment_code = normalize_payment_code(data.payment_code)
-    token_hash = hash_payment_code(payment_code)
-
-    with get_conn() as conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "select id, role from profiles where id = %s",
-                    (seller_id,)
-                )
-                seller = cur.fetchone()
-
-                if not seller:
-                    raise HTTPException(status_code=404, detail="Vendedor no encontrado")
-
-                if seller["role"] != "SELLER":
-                    raise HTTPException(status_code=400, detail="El usuario no tiene rol SELLER")
-
-                cur.execute(
-                    """
-                    select *
-                    from tokens
-                    where token_hash = %s
-                    for update
-                    """,
-                    (token_hash,)
-                )
-                token = cur.fetchone()
-
-                response_time_ms = int((time.perf_counter() - start) * 1000)
-
-                if not token:
-                    cur.execute(
-                        """
-                        insert into transactions(
-                            token_hash, seller_id, amount_cop, status,
-                            rejection_reason, qr_payload, response_time_ms
-                        )
-                        values (%s, %s, 10000, 'REJECTED', %s, %s, %s)
-                        returning *
-                        """,
-                        (
-                            token_hash,
-                            seller_id,
-                            "TOKEN_NOT_FOUND",
-                            Json({"payment_code": payment_code}),
-                            response_time_ms
-                        )
-                    )
-                    transaction = cur.fetchone()
-
-                    cur.execute(
-                        """
-                        insert into invalid_attempts(
-                            transaction_id, token_hash, seller_id, reason, qr_payload
-                        )
-                        values (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            transaction["id"],
-                            token_hash,
-                            seller_id,
-                            "TOKEN_NOT_FOUND",
-                            Json({"payment_code": payment_code})
-                        )
-                    )
-
-                    conn.commit()
-
-                    return {
-                        "approved": False,
-                        "reason": "TOKEN_NOT_FOUND",
-                        "message": "Token inexistente o inválido"
-                    }
-
-                if token["status"] != "AVAILABLE":
-                    cur.execute(
-                        """
-                        insert into transactions(
-                            token_id, token_hash, client_id, seller_id, amount_cop,
-                            status, rejection_reason, qr_payload, response_time_ms
-                        )
-                        values (%s, %s, %s, %s, 10000, 'REJECTED', %s, %s, %s)
-                        returning *
-                        """,
-                        (
-                            token["id"],
-                            token["token_hash"],
-                            token["client_id"],
-                            seller_id,
-                            f"TOKEN_ALREADY_{token['status']}",
-                            Json({"payment_code": payment_code}),
-                            response_time_ms
-                        )
-                    )
-                    transaction = cur.fetchone()
-
-                    cur.execute(
-                        """
-                        insert into invalid_attempts(
-                            transaction_id, token_id, token_hash, seller_id, reason, qr_payload
-                        )
-                        values (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            transaction["id"],
-                            token["id"],
-                            token["token_hash"],
-                            seller_id,
-                            f"TOKEN_ALREADY_{token['status']}",
-                            Json({"payment_code": payment_code})
-                        )
-                    )
-
-                    conn.commit()
-
-                    return {
-                        "approved": False,
-                        "reason": f"TOKEN_ALREADY_{token['status']}",
-                        "message": "El token ya no está disponible"
-                    }
-
-                cur.execute(
-                    """
-                    update tokens
-                    set status = 'USED',
-                        used_at = now()
-                    where id = %s
-                    returning *
-                    """,
-                    (token["id"],)
-                )
-                used_token = cur.fetchone()
-
-                cur.execute(
-                    """
-                    update wallets
-                    set blocked_balance_cop = blocked_balance_cop - 10000,
-                        updated_at = now()
-                    where user_id = %s
-                    returning *
-                    """,
-                    (token["client_id"],)
-                )
-                client_wallet = cur.fetchone()
-
-                cur.execute(
-                    """
-                    update wallets
-                    set available_balance_cop = available_balance_cop + 10000,
-                        updated_at = now()
-                    where user_id = %s
-                    returning *
-                    """,
-                    (seller_id,)
-                )
-                seller_wallet = cur.fetchone()
-
-                response_time_ms = int((time.perf_counter() - start) * 1000)
-
-                cur.execute(
-                    """
-                    insert into transactions(
-                        token_id, token_hash, client_id, seller_id, amount_cop,
-                        status, qr_payload, response_time_ms
-                    )
-                    values (%s, %s, %s, %s, 10000, 'APPROVED', %s, %s)
-                    returning *
-                    """,
-                    (
-                        token["id"],
-                        token["token_hash"],
-                        token["client_id"],
-                        seller_id,
-                        Json({"payment_code": payment_code}),
-                        response_time_ms
-                    )
-                )
-                transaction = cur.fetchone()
-
-                cur.execute(
-                    """
-                    insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop,
-                        related_token_id, related_transaction_id, description
-                    )
-                    values (
-                        %s, %s, 'PAYMENT_SENT', 10000,
-                        %s, %s,
-                        %s, %s, %s
-                    )
-                    """,
-                    (
-                        client_wallet["id"],
-                        token["client_id"],
-                        client_wallet["blocked_balance_cop"] + 10000,
-                        client_wallet["blocked_balance_cop"],
-                        token["id"],
-                        transaction["id"],
-                        "Pago realizado con token OffPay"
-                    )
-                )
-
-                cur.execute(
-                    """
-                    insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop,
-                        related_token_id, related_transaction_id, description
-                    )
-                    values (
-                        %s, %s, 'PAYMENT_RECEIVED', 10000,
-                        %s, %s,
-                        %s, %s, %s
-                    )
-                    """,
-                    (
-                        seller_wallet["id"],
-                        seller_id,
-                        seller_wallet["available_balance_cop"] - 10000,
-                        seller_wallet["available_balance_cop"],
-                        token["id"],
-                        transaction["id"],
-                        "Pago recibido por vendedor"
-                    )
-                )
-
-                conn.commit()
-
-                return {
-                    "approved": True,
-                    "message": "Pago aprobado",
-                    "token": {
-                        "id": used_token["id"],
-                        "payment_code": used_token["payment_code"],
-                        "status": used_token["status"],
-                        "used_at": used_token["used_at"]
-                    },
-                    "transaction": dict(transaction),
-                    "client_wallet": dict(client_wallet),
-                    "seller_wallet": dict(seller_wallet)
-                }
-
-        except HTTPException:
-            conn.rollback()
-            raise
-        except Exception as e:
-            conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
-
+# ============================================================
+# DEVOLVER TOKEN NO UTILIZADO
+# ============================================================
 
 @app.post("/tokens/refund")
 def refund_token(data: RefundTokenRequest):
+    """
+    Devuelve un token que no haya sido utilizado.
+
+    El proceso:
+    1. Verifica que el token exista
+    2. Verifica que pertenezca al cliente
+    3. Verifica que el token siga AVAILABLE
+    4. Libera el saldo bloqueado
+    5. Marca el token como RETURNED
+    6. Registra el movimiento en wallet_movements
+    """
+
+    # Limpia espacios del client_id
     client_id = data.client_id.strip()
+
+    # Normaliza el payment code recibido
     payment_code = normalize_payment_code(data.payment_code)
+
+    # Genera el hash del token
     token_hash = hash_payment_code(payment_code)
 
+    # Abre conexión a la base de datos
     with get_conn() as conn:
+
         try:
             with conn.cursor() as cur:
+
+                # ====================================================
+                # BUSCA Y BLOQUEA EL TOKEN
+                # ====================================================
+
                 cur.execute(
                     """
                     select *
                     from tokens
-                    where client_id = %s and token_hash = %s
+                    where client_id = %s
+                    and token_hash = %s
                     for update
                     """,
                     (client_id, token_hash)
                 )
+
                 token = cur.fetchone()
 
+                # Verifica existencia del token
                 if not token:
-                    raise HTTPException(status_code=404, detail="Token no encontrado para este cliente")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Token no encontrado para este cliente"
+                    )
 
+                # Verifica estado del token
                 if token["status"] != "AVAILABLE":
-                    raise HTTPException(status_code=400, detail="Solo se pueden devolver tokens AVAILABLE")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Solo se pueden devolver tokens AVAILABLE"
+                    )
+
+                # ====================================================
+                # BLOQUEA WALLET DEL CLIENTE
+                # ====================================================
 
                 cur.execute(
                     "select * from wallets where user_id = %s for update",
                     (client_id,)
                 )
+
                 wallet = cur.fetchone()
 
+                # Verifica existencia de wallet
                 if not wallet:
-                    raise HTTPException(status_code=404, detail="Wallet no encontrada")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Wallet no encontrada"
+                    )
 
+                # Guarda saldos anteriores
                 blocked_before = wallet["blocked_balance_cop"]
                 available_before = wallet["available_balance_cop"]
 
+                # Verifica saldo bloqueado suficiente
                 if blocked_before < 10000:
-                    raise HTTPException(status_code=400, detail="Saldo bloqueado insuficiente para devolver token")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Saldo bloqueado insuficiente para devolver token"
+                    )
+
+                # ====================================================
+                # MARCA TOKEN COMO DEVUELTO
+                # ====================================================
 
                 cur.execute(
                     """
                     update tokens
-                    set status = 'RETURNED',
+
+                    set
+                        status = 'RETURNED',
                         returned_at = now()
+
                     where id = %s
+
                     returning *
                     """,
                     (token["id"],)
                 )
+
                 returned_token = cur.fetchone()
+
+                # ====================================================
+                # ACTUALIZA WALLET
+                # ====================================================
 
                 cur.execute(
                     """
                     update wallets
-                    set blocked_balance_cop = blocked_balance_cop - 10000,
+
+                    set
+                        blocked_balance_cop = blocked_balance_cop - 10000,
                         available_balance_cop = available_balance_cop + 10000,
                         updated_at = now()
+
                     where user_id = %s
+
                     returning *
                     """,
                     (client_id,)
                 )
+
                 updated_wallet = cur.fetchone()
+
+                # ====================================================
+                # REGISTRA MOVIMIENTO
+                # ====================================================
 
                 cur.execute(
                     """
                     insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop,
-                        related_token_id, description
+                        wallet_id,
+                        user_id,
+                        movement_type,
+                        amount_cop,
+                        balance_before_cop,
+                        balance_after_cop,
+                        related_token_id,
+                        description
                     )
-                    values (%s, %s, 'TOKEN_REFUND', %s, %s, %s, %s, %s)
+
+                    values (
+                        %s,
+                        %s,
+                        'TOKEN_REFUND',
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
                     """,
                     (
                         wallet["id"],
@@ -743,55 +911,136 @@ def refund_token(data: RefundTokenRequest):
                     )
                 )
 
+                # Guarda cambios
                 conn.commit()
 
                 return {
                     "message": "Token devuelto correctamente",
+
                     "token": {
                         "id": returned_token["id"],
                         "payment_code": returned_token["payment_code"],
                         "status": returned_token["status"],
                         "returned_at": returned_token["returned_at"]
                     },
+
                     "wallet": dict(updated_wallet)
                 }
 
         except HTTPException:
+
+            # Revierte cambios si ocurre error HTTP
             conn.rollback()
             raise
+
         except Exception as e:
+
+            # Revierte cambios ante errores generales
             conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
-        
+
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+
+
+# ============================================================
+# VALIDAR PAGO POR PAQUETE DE TOKENS
+# ============================================================
+
 @app.post("/payments/validate-package")
 def validate_package_payment(data: ValidatePackagePaymentRequest):
+    """
+    Valida un pago utilizando múltiples tokens.
+
+    El proceso:
+    1. Verifica vendedor
+    2. Verifica tokens
+    3. Verifica estados
+    4. Verifica cliente único
+    5. Descuenta saldo bloqueado
+    6. Aumenta saldo del vendedor
+    7. Marca tokens como USED
+    8. Registra transacciones y movimientos
+    """
+
+    # Inicia medición de tiempo de respuesta
     start = time.perf_counter()
+
+    # Limpia seller_id
     seller_id = data.seller_id.strip()
-    payment_codes = [normalize_payment_code(code) for code in data.payment_codes if code.strip()]
 
+    # Normaliza todos los payment_codes
+    payment_codes = [
+        normalize_payment_code(code)
+        for code in data.payment_codes
+        if code.strip()
+    ]
+
+    # ========================================================
+    # VALIDACIONES INICIALES
+    # ========================================================
+
+    # Verifica que existan códigos
     if not payment_codes:
-        raise HTTPException(status_code=400, detail="Debes enviar al menos un payment_code")
+        raise HTTPException(
+            status_code=400,
+            detail="Debes enviar al menos un payment_code"
+        )
 
+    # Verifica duplicados
     if len(set(payment_codes)) != len(payment_codes):
-        raise HTTPException(status_code=400, detail="El paquete contiene payment_codes duplicados")
+        raise HTTPException(
+            status_code=400,
+            detail="El paquete contiene payment_codes duplicados"
+        )
 
-    token_hashes = [hash_payment_code(code) for code in payment_codes]
+    # Genera hashes de tokens
+    token_hashes = [
+        hash_payment_code(code)
+        for code in payment_codes
+    ]
+
+    # Calcula monto total
     total_amount = len(payment_codes) * 10000
 
+    # ========================================================
+    # CONEXIÓN A BASE DE DATOS
+    # ========================================================
+
     with get_conn() as conn:
+
         try:
             with conn.cursor() as cur:
+
+                # ====================================================
+                # VERIFICA VENDEDOR
+                # ====================================================
+
                 cur.execute(
                     "select id, role from profiles where id = %s",
                     (seller_id,)
                 )
+
                 seller = cur.fetchone()
 
+                # Verifica existencia
                 if not seller:
-                    raise HTTPException(status_code=404, detail="Vendedor no encontrado")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Vendedor no encontrado"
+                    )
 
+                # Verifica rol
                 if seller["role"] != "SELLER":
-                    raise HTTPException(status_code=400, detail="El usuario no tiene rol SELLER")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="El usuario no tiene rol SELLER"
+                    )
+
+                # ====================================================
+                # BUSCA TOKENS
+                # ====================================================
 
                 cur.execute(
                     """
@@ -802,57 +1051,30 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                     """,
                     (token_hashes,)
                 )
+
                 tokens = cur.fetchall()
 
-                response_time_ms = int((time.perf_counter() - start) * 1000)
+                # Calcula tiempo de respuesta
+                response_time_ms = int(
+                    (time.perf_counter() - start) * 1000
+                )
+
+                # ====================================================
+                # VERIFICA TOKENS FALTANTES
+                # ====================================================
 
                 if len(tokens) != len(token_hashes):
-                    found_hashes = {token["token_hash"] for token in tokens}
-                    missing_hashes = [token_hash for token_hash in token_hashes if token_hash not in found_hashes]
 
-                    cur.execute(
-                        """
-                        insert into transactions(
-                            token_hash, seller_id, amount_cop, status,
-                            rejection_reason, qr_payload, response_time_ms
-                        )
-                        values (%s, %s, %s, 'REJECTED', %s, %s, %s)
-                        returning *
-                        """,
-                        (
-                            missing_hashes[0] if missing_hashes else None,
-                            seller_id,
-                            total_amount,
-                            "TOKEN_PACKAGE_INCOMPLETE",
-                            Json({
-                                "payment_codes": payment_codes,
-                                "missing_hashes": missing_hashes
-                            }),
-                            response_time_ms
-                        )
-                    )
-                    transaction = cur.fetchone()
+                    found_hashes = {
+                        token["token_hash"]
+                        for token in tokens
+                    }
 
-                    cur.execute(
-                        """
-                        insert into invalid_attempts(
-                            transaction_id, token_hash, seller_id, reason, qr_payload
-                        )
-                        values (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            transaction["id"],
-                            missing_hashes[0] if missing_hashes else None,
-                            seller_id,
-                            "TOKEN_PACKAGE_INCOMPLETE",
-                            Json({
-                                "payment_codes": payment_codes,
-                                "missing_hashes": missing_hashes
-                            })
-                        )
-                    )
-
-                    conn.commit()
+                    missing_hashes = [
+                        token_hash
+                        for token_hash in token_hashes
+                        if token_hash not in found_hashes
+                    ]
 
                     return {
                         "approved": False,
@@ -860,43 +1082,16 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                         "message": "Faltan uno o más tokens del paquete"
                     }
 
-                client_ids = {token["client_id"] for token in tokens}
+                # ====================================================
+                # VERIFICA CLIENTE ÚNICO
+                # ====================================================
+
+                client_ids = {
+                    token["client_id"]
+                    for token in tokens
+                }
+
                 if len(client_ids) != 1:
-                    cur.execute(
-                        """
-                        insert into transactions(
-                            seller_id, amount_cop, status,
-                            rejection_reason, qr_payload, response_time_ms
-                        )
-                        values (%s, %s, 'REJECTED', %s, %s, %s)
-                        returning *
-                        """,
-                        (
-                            seller_id,
-                            total_amount,
-                            "TOKEN_PACKAGE_MIXED_CLIENTS",
-                            Json({"payment_codes": payment_codes}),
-                            response_time_ms
-                        )
-                    )
-                    transaction = cur.fetchone()
-
-                    cur.execute(
-                        """
-                        insert into invalid_attempts(
-                            transaction_id, seller_id, reason, qr_payload
-                        )
-                        values (%s, %s, %s, %s)
-                        """,
-                        (
-                            transaction["id"],
-                            seller_id,
-                            "TOKEN_PACKAGE_MIXED_CLIENTS",
-                            Json({"payment_codes": payment_codes})
-                        )
-                    )
-
-                    conn.commit()
 
                     return {
                         "approved": False,
@@ -904,50 +1099,19 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                         "message": "El paquete contiene tokens de distintos clientes"
                     }
 
-                unavailable_tokens = [token for token in tokens if token["status"] != "AVAILABLE"]
+                # ====================================================
+                # VERIFICA TOKENS DISPONIBLES
+                # ====================================================
+
+                unavailable_tokens = [
+                    token
+                    for token in tokens
+                    if token["status"] != "AVAILABLE"
+                ]
+
                 if unavailable_tokens:
+
                     bad_token = unavailable_tokens[0]
-
-                    cur.execute(
-                        """
-                        insert into transactions(
-                            token_id, token_hash, client_id, seller_id, amount_cop,
-                            status, rejection_reason, qr_payload, response_time_ms
-                        )
-                        values (%s, %s, %s, %s, %s, 'REJECTED', %s, %s, %s)
-                        returning *
-                        """,
-                        (
-                            bad_token["id"],
-                            bad_token["token_hash"],
-                            bad_token["client_id"],
-                            seller_id,
-                            total_amount,
-                            f"TOKEN_ALREADY_{bad_token['status']}",
-                            Json({"payment_codes": payment_codes}),
-                            response_time_ms
-                        )
-                    )
-                    transaction = cur.fetchone()
-
-                    cur.execute(
-                        """
-                        insert into invalid_attempts(
-                            transaction_id, token_id, token_hash, seller_id, reason, qr_payload
-                        )
-                        values (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            transaction["id"],
-                            bad_token["id"],
-                            bad_token["token_hash"],
-                            seller_id,
-                            f"TOKEN_ALREADY_{bad_token['status']}",
-                            Json({"payment_codes": payment_codes})
-                        )
-                    )
-
-                    conn.commit()
 
                     return {
                         "approved": False,
@@ -955,77 +1119,155 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                         "message": "Uno o más tokens del paquete ya no están disponibles"
                     }
 
+                # Obtiene client_id
                 client_id = tokens[0]["client_id"]
+
+                # ====================================================
+                # BLOQUEA WALLETS
+                # ====================================================
 
                 cur.execute(
                     "select * from wallets where user_id = %s for update",
                     (client_id,)
                 )
+
                 client_wallet_before = cur.fetchone()
 
                 cur.execute(
                     "select * from wallets where user_id = %s for update",
                     (seller_id,)
                 )
+
                 seller_wallet_before = cur.fetchone()
 
+                # Verifica wallet cliente
                 if not client_wallet_before:
-                    raise HTTPException(status_code=404, detail="Wallet del cliente no encontrada")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Wallet del cliente no encontrada"
+                    )
 
+                # Verifica wallet vendedor
                 if not seller_wallet_before:
-                    raise HTTPException(status_code=404, detail="Wallet del vendedor no encontrada")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Wallet del vendedor no encontrada"
+                    )
 
+                # Verifica saldo bloqueado
                 if client_wallet_before["blocked_balance_cop"] < total_amount:
-                    raise HTTPException(status_code=400, detail="Saldo bloqueado insuficiente")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Saldo bloqueado insuficiente"
+                    )
+
+                # ====================================================
+                # MARCA TOKENS COMO USED
+                # ====================================================
 
                 token_ids = [token["id"] for token in tokens]
 
                 cur.execute(
                     """
                     update tokens
-                    set status = 'USED',
+
+                    set
+                        status = 'USED',
                         used_at = now()
+
                     where id = any(%s::uuid[])
-                    returning id, payment_code, status, used_at
+
+                    returning
+                        id,
+                        payment_code,
+                        status,
+                        used_at
                     """,
                     (token_ids,)
                 )
+
                 used_tokens = cur.fetchall()
 
-                cur.execute(
-                    """
-                    update wallets
-                    set blocked_balance_cop = blocked_balance_cop - %s,
-                        updated_at = now()
-                    where user_id = %s
-                    returning *
-                    """,
-                    (total_amount, client_id)
-                )
-                client_wallet_after = cur.fetchone()
+                # ====================================================
+                # ACTUALIZA WALLET CLIENTE
+                # ====================================================
 
                 cur.execute(
                     """
                     update wallets
-                    set available_balance_cop = available_balance_cop + %s,
+
+                    set
+                        blocked_balance_cop = blocked_balance_cop - %s,
                         updated_at = now()
+
                     where user_id = %s
+
                     returning *
                     """,
-                    (total_amount, seller_id)
+                    (
+                        total_amount,
+                        client_id
+                    )
                 )
+
+                client_wallet_after = cur.fetchone()
+
+                # ====================================================
+                # ACTUALIZA WALLET VENDEDOR
+                # ====================================================
+
+                cur.execute(
+                    """
+                    update wallets
+
+                    set
+                        available_balance_cop = available_balance_cop + %s,
+                        updated_at = now()
+
+                    where user_id = %s
+
+                    returning *
+                    """,
+                    (
+                        total_amount,
+                        seller_id
+                    )
+                )
+
                 seller_wallet_after = cur.fetchone()
+
+                # ====================================================
+                # REGISTRA TRANSACCIONES
+                # ====================================================
 
                 transaction_ids = []
 
                 for token in tokens:
+
                     cur.execute(
                         """
                         insert into transactions(
-                            token_id, token_hash, client_id, seller_id, amount_cop,
-                            status, qr_payload, response_time_ms
+                            token_id,
+                            token_hash,
+                            client_id,
+                            seller_id,
+                            amount_cop,
+                            status,
+                            qr_payload,
+                            response_time_ms
                         )
-                        values (%s, %s, %s, %s, 10000, 'APPROVED', %s, %s)
+
+                        values (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            10000,
+                            'APPROVED',
+                            %s,
+                            %s
+                        )
+
                         returning id
                         """,
                         (
@@ -1041,15 +1283,36 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                             response_time_ms
                         )
                     )
-                    transaction_ids.append(cur.fetchone()["id"])
+
+                    transaction_ids.append(
+                        cur.fetchone()["id"]
+                    )
+
+                # ====================================================
+                # MOVIMIENTO CLIENTE
+                # ====================================================
 
                 cur.execute(
                     """
                     insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop, description
+                        wallet_id,
+                        user_id,
+                        movement_type,
+                        amount_cop,
+                        balance_before_cop,
+                        balance_after_cop,
+                        description
                     )
-                    values (%s, %s, 'PAYMENT_SENT', %s, %s, %s, %s)
+
+                    values (
+                        %s,
+                        %s,
+                        'PAYMENT_SENT',
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
                     """,
                     (
                         client_wallet_before["id"],
@@ -1061,13 +1324,31 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                     )
                 )
 
+                # ====================================================
+                # MOVIMIENTO VENDEDOR
+                # ====================================================
+
                 cur.execute(
                     """
                     insert into wallet_movements(
-                        wallet_id, user_id, movement_type, amount_cop,
-                        balance_before_cop, balance_after_cop, description
+                        wallet_id,
+                        user_id,
+                        movement_type,
+                        amount_cop,
+                        balance_before_cop,
+                        balance_after_cop,
+                        description
                     )
-                    values (%s, %s, 'PAYMENT_RECEIVED', %s, %s, %s, %s)
+
+                    values (
+                        %s,
+                        %s,
+                        'PAYMENT_RECEIVED',
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    )
                     """,
                     (
                         seller_wallet_before["id"],
@@ -1079,6 +1360,7 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                     )
                 )
 
+                # Guarda cambios
                 conn.commit()
 
                 return {
@@ -1093,16 +1375,36 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                 }
 
         except HTTPException:
+
+            # Revierte cambios si ocurre error HTTP
             conn.rollback()
             raise
+
         except Exception as e:
+
+            # Revierte cambios ante errores generales
             conn.rollback()
-            raise HTTPException(status_code=400, detail=str(e))
+
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+
+
+# ============================================================
+# OBTENER TRANSACCIONES
+# ============================================================
 
 @app.get("/transactions")
 def get_transactions():
+    """
+    Retorna todas las transacciones registradas
+    ordenadas desde la más reciente.
+    """
+
     with get_conn() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 select *
@@ -1110,6 +1412,7 @@ def get_transactions():
                 order by created_at desc
                 """
             )
+
             rows = cur.fetchall()
 
             return {
@@ -1117,10 +1420,20 @@ def get_transactions():
             }
 
 
+# ============================================================
+# OBTENER INTENTOS INVÁLIDOS
+# ============================================================
+
 @app.get("/admin/invalid-attempts")
 def get_invalid_attempts():
+    """
+    Retorna todos los intentos inválidos
+    registrados en el sistema.
+    """
+
     with get_conn() as conn:
         with conn.cursor() as cur:
+
             cur.execute(
                 """
                 select *
@@ -1128,6 +1441,7 @@ def get_invalid_attempts():
                 order by created_at desc
                 """
             )
+
             rows = cur.fetchall()
 
             return {
