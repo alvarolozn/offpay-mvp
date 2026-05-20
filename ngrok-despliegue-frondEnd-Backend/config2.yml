@@ -1,0 +1,24 @@
+# Versión del archivo de configuración de ngrok
+version: "3"
+
+# Configuración principal del agente ngrok
+agent:
+
+  # Token de autenticación de ngrok
+  # Vincula este cliente con tu cuenta de ngrok
+  authtoken: 3DytWV83GTxz1t8bGAgOuxHJwwG_4MrkxUQWDu7tDynNghQjL
+
+# Definición de túneles
+tunnels:
+
+  # Nombre del túnel
+  # Este túnel será usado para el backend
+  backend:
+
+    # Puerto local donde está corriendo el backend
+    # Normalmente APIs en FastAPI, Flask o Django usan el 8000
+    addr: 8000
+
+    # Protocolo utilizado
+    # http indica que es un servicio web
+    proto: http

@@ -15,7 +15,7 @@ const CONFIG_KEY = 'offpay_admin_config'
 
 // Valores por defecto — cámbialos en la pantalla de Configuración
 const DEFAULTS = {
-  backendUrl: 'https://attempt-uncommon-matron.ngrok-free.dev/db-test',
+  backendUrl: 'https://attempt-uncommon-matron.ngrok-free.dev',
   clientIdDemo: '',
   sellerIdDemo: '',
 }
