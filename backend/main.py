@@ -826,10 +826,18 @@ def generate_tokens(data: GenerateTokensRequest):
 @app.get("/tokens/client/{client_id}")
 def get_client_tokens(client_id: str):
     """
+<<<<<<< HEAD
     Retorna todos los tokens de un cliente específico,
     ordenados por fecha de creación descendente.
     """
     clean_id = client_id.strip()
+=======
+    Retorna todos los tokens de un cliente,
+    ordenados por counter ascendente.
+    """
+
+    clean_client_id = client_id.strip()
+>>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -844,12 +852,16 @@ def get_client_tokens(client_id: str):
                     value_cop,
                     status,
                     blockchain_status,
+<<<<<<< HEAD
                     chain_id,
+=======
+>>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
                     created_at,
                     used_at,
                     returned_at
                 from tokens
                 where client_id = %s
+<<<<<<< HEAD
                 order by created_at desc
                 """,
                 (clean_id,)
@@ -864,6 +876,17 @@ def get_client_tokens(client_id: str):
 
             return {
                 "client_id": clean_id,
+=======
+                order by counter asc
+                """,
+                (clean_client_id,)
+            )
+
+            rows = cur.fetchall()
+
+            return {
+                "client_id": clean_client_id,
+>>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
                 "tokens": [dict(row) for row in rows]
             }
 
