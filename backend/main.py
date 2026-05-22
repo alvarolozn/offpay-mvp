@@ -1,7 +1,9 @@
 import os
 import time
-
+import sys
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
+from web3 import Web3
 from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
 from psycopg2.extras import Json
@@ -29,6 +31,12 @@ APP_NAME = os.getenv("APP_NAME", "OffPay MVP API")
 # Obtiene la versión de la aplicación desde el .env.
 # Si no existe, usa "1.0.0" por defecto.
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+# ============================================================
+# CONFIGURACIÓN BLOCKCHAIN
+# ============================================================
+
+BLOCKCHAIN_RPC_URL = os.getenv("BLOCKCHAIN_RPC_URL")
+BLOCKCHAIN_EXPECTED_CHAIN_ID = os.getenv("BLOCKCHAIN_EXPECTED_CHAIN_ID")
 
 
 # ============================================================
@@ -168,6 +176,460 @@ def db_test():
             detail=f"Error conectando a la base de datos: {str(e)}"
         )
 
+# ============================================================
+# BLOCKCHAIN HELPERS
+# ============================================================
+def _blockchain_writes_enabled():
+    return os.getenv("BLOCKCHAIN_WRITE_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on"
+    )
+    
+def _load_blockchain_client():
+    """
+    Carga el cliente blockchain desde la carpeta externa blockchain_bridge.
+
+    Mantiene los cambios del backend al mínimo.
+    """
+
+    project_root = Path(__file__).resolve().parent.parent
+
+    if str(project_root) not in sys.path:
+        sys.path.append(str(project_root))
+
+    from blockchain_bridge.python.offpay_chain_client import (
+        check_blockchain_health,
+        get_token_status,
+        register_token,
+        mark_token_used,
+        mark_token_returned,
+    )
+
+    return {
+        "check_blockchain_health": check_blockchain_health,
+        "get_token_status": get_token_status,
+        "register_token": register_token,
+        "mark_token_used": mark_token_used,
+        "mark_token_returned": mark_token_returned,
+    }
+
+
+def _register_tokens_on_blockchain(generated_tokens: list[dict]):
+    """
+    Intenta registrar en blockchain los tokens recién generados.
+
+    Regla de seguridad:
+    - No rompe el flujo principal si blockchain falla.
+    - Actualiza blockchain_status en base de datos.
+    - Guarda register_tx_hash si la transacción fue exitosa.
+    """
+
+    if not generated_tokens:
+        return generated_tokens
+
+    try:
+        blockchain = _load_blockchain_client()
+        register_token = blockchain["register_token"]
+        check_blockchain_health = blockchain["check_blockchain_health"]
+
+        health = check_blockchain_health()
+        chain_id = health.get("chain_id")
+        contract_address = health.get("contract_address")
+
+    except Exception as e:
+        # Si ni siquiera carga blockchain, marcamos todos como FAILED
+        with get_conn() as conn:
+            try:
+                with conn.cursor() as cur:
+                    for token in generated_tokens:
+                        cur.execute(
+                            """
+                            update tokens
+                            set
+                                blockchain_status = 'FAILED'
+                            where id = %s
+                            """,
+                            (token["id"],)
+                        )
+
+                        token["blockchain_status"] = "FAILED"
+                        token["blockchain_error"] = str(e)
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+        return generated_tokens
+
+    with get_conn() as conn:
+        try:
+            with conn.cursor() as cur:
+                for token in generated_tokens:
+                    token_id = token["id"]
+                    token_hash = token["token_hash"]
+
+                    try:
+                        result = register_token(token_hash)
+
+                        cur.execute(
+                            """
+                            update tokens
+                            set
+                                blockchain_status = 'REGISTERED',
+                                chain_id = %s,
+                                contract_address = %s,
+                                register_tx_hash = %s
+                            where id = %s
+                            returning
+                                blockchain_status,
+                                chain_id,
+                                contract_address,
+                                register_tx_hash
+                            """,
+                            (
+                                chain_id,
+                                contract_address,
+                                result["tx_hash"],
+                                token_id
+                            )
+                        )
+
+                        updated = cur.fetchone()
+
+                        token["blockchain_status"] = updated["blockchain_status"]
+                        token["chain_id"] = updated["chain_id"]
+                        token["contract_address"] = updated["contract_address"]
+                        token["register_tx_hash"] = updated["register_tx_hash"]
+
+                    except Exception as e:
+                        cur.execute(
+                            """
+                            update tokens
+                            set
+                                blockchain_status = 'FAILED',
+                                chain_id = %s,
+                                contract_address = %s
+                            where id = %s
+                            returning
+                                blockchain_status,
+                                chain_id,
+                                contract_address
+                            """,
+                            (
+                                chain_id,
+                                contract_address,
+                                token_id
+                            )
+                        )
+
+                        updated = cur.fetchone()
+
+                        token["blockchain_status"] = updated["blockchain_status"]
+                        token["chain_id"] = updated["chain_id"]
+                        token["contract_address"] = updated["contract_address"]
+                        token["blockchain_error"] = str(e)
+
+            conn.commit()
+
+        except Exception:
+            conn.rollback()
+
+    return generated_tokens
+def _mark_used_tokens_on_blockchain(tokens_to_mark: list[dict]):
+    """
+    Intenta marcar en blockchain tokens que ya fueron usados en el backend.
+
+    Regla:
+    - La base de datos sigue siendo la fuente operativa.
+    - Blockchain actúa como registro inmutable.
+    - Si blockchain falla, no se revierte el pago.
+    """
+
+    if not tokens_to_mark:
+        return []
+
+    try:
+        blockchain = _load_blockchain_client()
+        mark_token_used = blockchain["mark_token_used"]
+        check_blockchain_health = blockchain["check_blockchain_health"]
+
+        health = check_blockchain_health()
+        chain_id = health.get("chain_id")
+        contract_address = health.get("contract_address")
+
+    except Exception as e:
+        return [
+            {
+                **token,
+                "blockchain_used_status": "FAILED",
+                "blockchain_error": str(e)
+            }
+            for token in tokens_to_mark
+        ]
+
+    results = []
+
+    with get_conn() as conn:
+        try:
+            with conn.cursor() as cur:
+                for token in tokens_to_mark:
+                    token_id = token["token_id"]
+                    token_hash = token["token_hash"]
+                    transaction_id = token.get("transaction_id")
+
+                    try:
+                        tx_result = mark_token_used(token_hash)
+
+                        cur.execute(
+                            """
+                            update tokens
+                            set
+                                used_tx_hash = %s,
+                                chain_id = %s,
+                                contract_address = %s
+                            where id = %s
+                            """,
+                            (
+                                tx_result["tx_hash"],
+                                chain_id,
+                                contract_address,
+                                token_id
+                            )
+                        )
+
+                        if transaction_id:
+                            cur.execute(
+                                """
+                                update transactions
+                                set
+                                    blockchain_tx_hash = %s,
+                                    block_number = %s,
+                                    updated_at = now()
+                                where id = %s
+                                """,
+                                (
+                                    tx_result["tx_hash"],
+                                    tx_result["block_number"],
+                                    transaction_id
+                                )
+                            )
+
+                        results.append({
+                            **token,
+                            "blockchain_used_status": "USED_REGISTERED",
+                            "used_tx_hash": tx_result["tx_hash"],
+                            "block_number": tx_result["block_number"]
+                        })
+
+                    except Exception as e:
+                        results.append({
+                            **token,
+                            "blockchain_used_status": "FAILED",
+                            "blockchain_error": str(e)
+                        })
+
+            conn.commit()
+
+        except Exception:
+            conn.rollback()
+            raise
+
+    return results
+# ============================================================
+# HEALTH CHECK BLOCKCHAIN
+# ============================================================
+
+@app.get("/blockchain/health")
+def blockchain_health():
+    """
+    Verifica conexión del backend con la blockchain real.
+
+    No modifica tokens.
+    No gasta gas.
+    Solo lectura.
+    """
+
+    try:
+        blockchain = _load_blockchain_client()
+        return blockchain["check_blockchain_health"]()
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error verificando conexión blockchain: {str(e)}"
+        )
+
+
+# ============================================================
+# CONSULTAR TOKEN EN BLOCKCHAIN
+# ============================================================
+
+@app.get("/blockchain/token/{token_hash}")
+def blockchain_token_status(token_hash: str):
+    """
+    Consulta el estado on-chain de un token por token_hash.
+
+    No modifica blockchain.
+    No gasta gas.
+    """
+
+    try:
+        blockchain = _load_blockchain_client()
+        return blockchain["get_token_status"](token_hash)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando token en blockchain: {str(e)}"
+        )
+        
+        # ============================================================
+# RESINCRONIZAR UN SOLO TOKEN ESPECIFICO
+# ============================================================
+
+@app.post("/blockchain/resync-token/{token_hash}")
+def blockchain_resync_one_token(token_hash: str):
+    """
+    Registra en blockchain UN token específico.
+    Modo ahorro: evita usar resync-pending con muchos tokens.
+    """
+
+    if not _blockchain_writes_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail="Las escrituras blockchain están desactivadas para ahorrar POL"
+        )
+
+    try:
+        blockchain = _load_blockchain_client()
+
+        check_blockchain_health = blockchain["check_blockchain_health"]
+        get_token_status = blockchain["get_token_status"]
+        register_token = blockchain["register_token"]
+
+        health = check_blockchain_health()
+        chain_id = health.get("chain_id")
+        contract_address = health.get("contract_address")
+
+        with get_conn() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        select
+                            id,
+                            token_hash,
+                            status,
+                            blockchain_status
+                        from tokens
+                        where token_hash = %s
+                        """,
+                        (token_hash,)
+                    )
+
+                    token = cur.fetchone()
+
+                    if not token:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="Token no encontrado en base de datos"
+                        )
+
+                    if token["status"] != "AVAILABLE":
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"El token no está AVAILABLE en base de datos. Estado actual: {token['status']}"
+                        )
+
+                    on_chain = get_token_status(token_hash)
+                    on_chain_status = on_chain["status_name"]
+
+                    if on_chain_status == "AVAILABLE":
+                        cur.execute(
+                            """
+                            update tokens
+                            set
+                                blockchain_status = 'REGISTERED',
+                                chain_id = %s,
+                                contract_address = %s
+                            where id = %s
+                            """,
+                            (
+                                chain_id,
+                                contract_address,
+                                token["id"]
+                            )
+                        )
+
+                        conn.commit()
+
+                        return {
+                            "message": "Token ya estaba registrado en blockchain",
+                            "token_id": str(token["id"]),
+                            "token_hash": token_hash,
+                            "action": "ALREADY_ON_CHAIN",
+                            "blockchain_status": "REGISTERED",
+                            "chain_id": chain_id,
+                            "contract_address": contract_address
+                        }
+
+                    if on_chain_status != "NONE":
+                        return {
+                            "message": "Token no se registró porque ya tiene otro estado en blockchain",
+                            "token_id": str(token["id"]),
+                            "token_hash": token_hash,
+                            "action": "SKIPPED",
+                            "on_chain_status": on_chain_status
+                        }
+
+                    tx_result = register_token(token_hash)
+
+                    cur.execute(
+                        """
+                        update tokens
+                        set
+                            blockchain_status = 'REGISTERED',
+                            chain_id = %s,
+                            contract_address = %s,
+                            register_tx_hash = %s
+                        where id = %s
+                        """,
+                        (
+                            chain_id,
+                            contract_address,
+                            tx_result["tx_hash"],
+                            token["id"]
+                        )
+                    )
+
+                    conn.commit()
+
+                    return {
+                        "message": "Token registrado en blockchain correctamente",
+                        "token_id": str(token["id"]),
+                        "token_hash": token_hash,
+                        "action": "REGISTERED_NOW",
+                        "blockchain_status": "REGISTERED",
+                        "register_tx_hash": tx_result["tx_hash"],
+                        "block_number": tx_result["block_number"],
+                        "chain_id": chain_id,
+                        "contract_address": contract_address
+                    }
+
+            except Exception:
+                conn.rollback()
+                raise
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error resincronizando token específico: {str(e)}"
+        )
 
 # ============================================================
 # REGISTRO DE CLIENTES
@@ -778,14 +1240,18 @@ def generate_tokens(data: GenerateTokensRequest):
 
                     generated_tokens.append(dict(token))
 
-                # Guarda cambios
-                conn.commit()
+                    # Guarda cambios principales en base de datos
+                    conn.commit()
 
-                return {
+                    # Intenta registrar los tokens en blockchain después del commit.
+                    # Si blockchain falla, el backend no se cae.
+                    generated_tokens = _register_tokens_on_blockchain(generated_tokens)
+
+                    return {
                     "message": f"{token_count} token(es) generado(s) correctamente",
                     "wallet": dict(updated_wallet),
                     "tokens": generated_tokens
-                }
+}
 
         except HTTPException:
 
@@ -1349,6 +1815,8 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                 # ====================================================
 
                 transaction_ids = []
+                payment_tokens_for_blockchain = []
+                
 
                 for token in tokens:
 
@@ -1392,9 +1860,23 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                         )
                     )
 
-                    transaction_ids.append(
-                        cur.fetchone()["id"]
-                    )
+                    transaction_row = cur.fetchone()
+
+                    if not transaction_row:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="No se pudo obtener el ID de la transacción creada"
+                        )
+
+                    transaction_id = transaction_row["id"]
+
+                    transaction_ids.append(transaction_id)
+
+                    payment_tokens_for_blockchain.append({
+                        "token_id": token["id"],
+                        "token_hash": token["token_hash"],
+                        "transaction_id": transaction_id
+                    })
 
                 # ====================================================
                 # MOVIMIENTO CLIENTE
@@ -1469,18 +1951,18 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                 )
 
                 # Guarda cambios
-                conn.commit()
+            conn.commit()
 
-                return {
-                    "approved": True,
-                    "message": "Pago aprobado",
-                    "total_amount_cop": total_amount,
-                    "tokens_used": len(used_tokens),
-                    "used_tokens": [dict(token) for token in used_tokens],
-                    "transaction_ids": transaction_ids,
-                    "client_wallet": dict(client_wallet_after),
-                    "seller_wallet": dict(seller_wallet_after)
-                }
+            blockchain_used_results = _mark_used_tokens_on_blockchain(payment_tokens_for_blockchain)
+
+            return {
+                "approved": True,
+                "message": "Pago aprobado",
+                "seller_id": seller_id,
+                "total_amount_cop": total_amount,
+                "transaction_ids": transaction_ids,
+                "blockchain_used_results": blockchain_used_results
+            }
 
         except HTTPException:
 
