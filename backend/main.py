@@ -1,7 +1,10 @@
 import os
 import time
+import csv
+from io import StringIO
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
@@ -108,6 +111,10 @@ class RefundTokenRequest(BaseModel):
 class DemoLoginRequest(BaseModel):
     username: str
     role: str
+
+
+class ReviewInvalidAttemptRequest(BaseModel):
+    review_note: str | None = None
 # ============================================================
 # ENDPOINT PRINCIPAL
 # ============================================================
@@ -829,8 +836,8 @@ def get_client_tokens(client_id: str, sort: str = "counter_asc"):
     Retorna todos los tokens de un cliente.
 
     sort soporta:
-    - counter_asc   -> ?til para la app cliente
-    - created_desc -> ?til para panel admin
+    - counter_asc   -> util para la app cliente
+    - created_desc -> util para panel admin
     """
 
     clean_client_id = client_id.strip()
@@ -1087,7 +1094,7 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
     """
     Valida un pago utilizando múltiples tokens.
 
-    El proceso:
+    Si el pago es aprobado:
     1. Verifica vendedor
     2. Verifica tokens
     3. Verifica estados
@@ -1095,57 +1102,153 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
     5. Descuenta saldo bloqueado
     6. Aumenta saldo del vendedor
     7. Marca tokens como USED
-    8. Registra transacciones y movimientos
+    8. Registra transacciones APPROVED y movimientos
+
+    Si el pago es rechazado por tokens faltantes, usados/devueltos
+    o tokens de distintos clientes:
+    1. Responde approved = False
+    2. Registra transacción REJECTED
+    3. Registra intento inválido en invalid_attempts
     """
 
-    # Inicia medición de tiempo de respuesta
     start = time.perf_counter()
 
-    # Limpia seller_id
     seller_id = data.seller_id.strip()
 
-    # Normaliza todos los payment_codes
     payment_codes = [
         normalize_payment_code(code)
         for code in data.payment_codes
         if code.strip()
     ]
 
-    # ========================================================
-    # VALIDACIONES INICIALES
-    # ========================================================
-
-    # Verifica que existan códigos
     if not payment_codes:
         raise HTTPException(
             status_code=400,
             detail="Debes enviar al menos un payment_code"
         )
 
-    # Verifica duplicados
     if len(set(payment_codes)) != len(payment_codes):
         raise HTTPException(
             status_code=400,
             detail="El paquete contiene payment_codes duplicados"
         )
 
-    # Genera hashes de tokens
     token_hashes = [
         hash_payment_code(code)
         for code in payment_codes
     ]
 
-    # Calcula monto total
     total_amount = len(payment_codes) * 10000
-
-    # ========================================================
-    # CONEXIÓN A BASE DE DATOS
-    # ========================================================
 
     with get_conn() as conn:
 
         try:
             with conn.cursor() as cur:
+
+                def registrar_rechazo(reason, token=None, token_hash=None):
+                    """
+                    Registra una transacción rechazada y un intento inválido
+                    para alimentar el panel admin y las alertas de fraude.
+                    """
+
+                    token_id = None
+                    client_id = None
+                    final_token_hash = token_hash
+                    amount_cop = 10000
+
+                    if token is not None:
+                        token_id = token["id"]
+                        client_id = token["client_id"]
+                        final_token_hash = token["token_hash"]
+                        amount_cop = token["value_cop"]
+
+                    qr_payload = {
+                        "payment_codes": payment_codes,
+                        "package_size": len(payment_codes),
+                        "total_amount_cop": total_amount,
+                        "reason": reason
+                    }
+
+                    response_time_ms = int(
+                        (time.perf_counter() - start) * 1000
+                    )
+
+                    cur.execute(
+                        """
+                        insert into transactions(
+                            token_id,
+                            token_hash,
+                            client_id,
+                            seller_id,
+                            amount_cop,
+                            status,
+                            rejection_reason,
+                            qr_payload,
+                            response_time_ms
+                        )
+                        values (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            'REJECTED',
+                            %s,
+                            %s,
+                            %s
+                        )
+                        returning id
+                        """,
+                        (
+                            token_id,
+                            final_token_hash,
+                            client_id,
+                            seller_id,
+                            amount_cop,
+                            reason,
+                            Json(qr_payload),
+                            response_time_ms
+                        )
+                    )
+
+                    transaction_id = cur.fetchone()["id"]
+
+                    cur.execute(
+                        """
+                        insert into invalid_attempts(
+                            transaction_id,
+                            token_id,
+                            token_hash,
+                            seller_id,
+                            reason,
+                            qr_payload
+                        )
+                        values (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s
+                        )
+                        returning id
+                        """,
+                        (
+                            transaction_id,
+                            token_id,
+                            final_token_hash,
+                            seller_id,
+                            reason,
+                            Json(qr_payload)
+                        )
+                    )
+
+                    invalid_attempt_id = cur.fetchone()["id"]
+
+                    return {
+                        "transaction_id": transaction_id,
+                        "invalid_attempt_id": invalid_attempt_id
+                    }
 
                 # ====================================================
                 # VERIFICA VENDEDOR
@@ -1158,14 +1261,12 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
 
                 seller = cur.fetchone()
 
-                # Verifica existencia
                 if not seller:
                     raise HTTPException(
                         status_code=404,
                         detail="Vendedor no encontrado"
                     )
 
-                # Verifica rol
                 if seller["role"] != "SELLER":
                     raise HTTPException(
                         status_code=400,
@@ -1188,7 +1289,6 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
 
                 tokens = cur.fetchall()
 
-                # Calcula tiempo de respuesta
                 response_time_ms = int(
                     (time.perf_counter() - start) * 1000
                 )
@@ -1210,10 +1310,27 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                         if token_hash not in found_hashes
                     ]
 
+                    transaction_ids = []
+                    invalid_attempt_ids = []
+
+                    for missing_hash in missing_hashes:
+                        record = registrar_rechazo(
+                            reason="TOKEN_PACKAGE_INCOMPLETE",
+                            token=None,
+                            token_hash=missing_hash
+                        )
+
+                        transaction_ids.append(record["transaction_id"])
+                        invalid_attempt_ids.append(record["invalid_attempt_id"])
+
+                    conn.commit()
+
                     return {
                         "approved": False,
                         "reason": "TOKEN_PACKAGE_INCOMPLETE",
-                        "message": "Faltan uno o más tokens del paquete"
+                        "message": "Faltan uno o más tokens del paquete",
+                        "transaction_ids": transaction_ids,
+                        "invalid_attempt_ids": invalid_attempt_ids
                     }
 
                 # ====================================================
@@ -1227,10 +1344,26 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
 
                 if len(client_ids) != 1:
 
+                    transaction_ids = []
+                    invalid_attempt_ids = []
+
+                    for token in tokens:
+                        record = registrar_rechazo(
+                            reason="TOKEN_PACKAGE_MIXED_CLIENTS",
+                            token=token
+                        )
+
+                        transaction_ids.append(record["transaction_id"])
+                        invalid_attempt_ids.append(record["invalid_attempt_id"])
+
+                    conn.commit()
+
                     return {
                         "approved": False,
                         "reason": "TOKEN_PACKAGE_MIXED_CLIENTS",
-                        "message": "El paquete contiene tokens de distintos clientes"
+                        "message": "El paquete contiene tokens de distintos clientes",
+                        "transaction_ids": transaction_ids,
+                        "invalid_attempt_ids": invalid_attempt_ids
                     }
 
                 # ====================================================
@@ -1246,14 +1379,30 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                 if unavailable_tokens:
 
                     bad_token = unavailable_tokens[0]
+                    rejection_reason = f"TOKEN_ALREADY_{bad_token['status']}"
+
+                    transaction_ids = []
+                    invalid_attempt_ids = []
+
+                    for token in unavailable_tokens:
+                        record = registrar_rechazo(
+                            reason=f"TOKEN_ALREADY_{token['status']}",
+                            token=token
+                        )
+
+                        transaction_ids.append(record["transaction_id"])
+                        invalid_attempt_ids.append(record["invalid_attempt_id"])
+
+                    conn.commit()
 
                     return {
                         "approved": False,
-                        "reason": f"TOKEN_ALREADY_{bad_token['status']}",
-                        "message": "Uno o más tokens del paquete ya no están disponibles"
+                        "reason": rejection_reason,
+                        "message": "Uno o más tokens del paquete ya no están disponibles",
+                        "transaction_ids": transaction_ids,
+                        "invalid_attempt_ids": invalid_attempt_ids
                     }
 
-                # Obtiene client_id
                 client_id = tokens[0]["client_id"]
 
                 # ====================================================
@@ -1274,21 +1423,18 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
 
                 seller_wallet_before = cur.fetchone()
 
-                # Verifica wallet cliente
                 if not client_wallet_before:
                     raise HTTPException(
                         status_code=404,
                         detail="Wallet del cliente no encontrada"
                     )
 
-                # Verifica wallet vendedor
                 if not seller_wallet_before:
                     raise HTTPException(
                         status_code=404,
                         detail="Wallet del vendedor no encontrada"
                     )
 
-                # Verifica saldo bloqueado
                 if client_wallet_before["blocked_balance_cop"] < total_amount:
                     raise HTTPException(
                         status_code=400,
@@ -1371,7 +1517,7 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                 seller_wallet_after = cur.fetchone()
 
                 # ====================================================
-                # REGISTRA TRANSACCIONES
+                # REGISTRA TRANSACCIONES APROBADAS
                 # ====================================================
 
                 transaction_ids = []
@@ -1494,7 +1640,6 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
                     )
                 )
 
-                # Guarda cambios
                 conn.commit()
 
                 return {
@@ -1510,19 +1655,283 @@ def validate_package_payment(data: ValidatePackagePaymentRequest):
 
         except HTTPException:
 
-            # Revierte cambios si ocurre error HTTP
             conn.rollback()
             raise
 
         except Exception as e:
 
-            # Revierte cambios ante errores generales
             conn.rollback()
 
             raise HTTPException(
                 status_code=400,
                 detail=str(e)
             )
+
+
+# ============================================================
+# ADMIN - HISTORIAL DE TRANSACCIONES CON FILTROS
+# ============================================================
+
+@app.get("/admin/transactions")
+def admin_get_transactions(
+    client_id: str | None = None,
+    seller_id: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+):
+    """
+    Historial de transacciones para el administrador.
+
+    Filtros opcionales:
+    - client_id
+    - seller_id
+    - status: APPROVED o REJECTED
+    - date_from: YYYY-MM-DD
+    - date_to: YYYY-MM-DD
+    """
+
+    where_parts = []
+    params = []
+
+    if client_id:
+        where_parts.append("tx.client_id = %s")
+        params.append(client_id.strip())
+
+    if seller_id:
+        where_parts.append("tx.seller_id = %s")
+        params.append(seller_id.strip())
+
+    if status:
+        clean_status = status.strip().upper()
+
+        if clean_status not in {"APPROVED", "REJECTED"}:
+            raise HTTPException(
+                status_code=400,
+                detail="status debe ser APPROVED o REJECTED"
+            )
+
+        where_parts.append("tx.status = %s")
+        params.append(clean_status)
+
+    if date_from:
+        where_parts.append("tx.created_at >= %s::date")
+        params.append(date_from.strip())
+
+    if date_to:
+        where_parts.append("tx.created_at < (%s::date + interval '1 day')")
+        params.append(date_to.strip())
+
+    where_sql = ""
+
+    if where_parts:
+        where_sql = " where " + " and ".join(where_parts)
+
+    offset = (page - 1) * page_size
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                f"""
+                select count(*) as total
+                from transactions tx
+                {where_sql}
+                """,
+                params
+            )
+
+            total = cur.fetchone()["total"]
+
+            cur.execute(
+                f"""
+                select
+                    tx.id,
+                    tx.token_id,
+                    tx.token_hash,
+                    tx.client_id,
+                    client.full_name as client_name,
+                    tx.seller_id,
+                    seller.full_name as seller_name,
+                    seller.commerce_name as seller_commerce_name,
+                    tx.amount_cop,
+                    tx.status,
+                    tx.rejection_reason,
+                    tx.blockchain_tx_hash,
+                    tx.block_number,
+                    tx.response_time_ms,
+                    tx.created_at,
+                    tx.updated_at,
+                    t.counter as token_counter,
+                    t.status as token_status,
+                    t.blockchain_status as token_blockchain_status,
+                    t.chain_id as token_chain_id
+                from transactions tx
+                left join profiles client
+                    on client.id = tx.client_id
+                join profiles seller
+                    on seller.id = tx.seller_id
+                left join tokens t
+                    on t.id = tx.token_id
+                {where_sql}
+                order by tx.created_at desc
+                limit %s
+                offset %s
+                """,
+                params + [page_size, offset]
+            )
+
+            rows = cur.fetchall()
+
+            total_pages = 0
+
+            if total > 0:
+                total_pages = (total + page_size - 1) // page_size
+
+            return {
+                "filters": {
+                    "client_id": client_id,
+                    "seller_id": seller_id,
+                    "status": status,
+                    "date_from": date_from,
+                    "date_to": date_to
+                },
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages
+                },
+                "transactions": [dict(row) for row in rows]
+            }
+
+
+# ============================================================
+# ADMIN - EXPORTAR TRANSACCIONES CSV
+# ============================================================
+
+@app.get("/admin/transactions/export")
+def admin_export_transactions(
+    client_id: str | None = None,
+    seller_id: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None
+):
+    """
+    Exporta transacciones filtradas en formato CSV.
+    """
+
+    where_parts = []
+    params = []
+
+    if client_id:
+        where_parts.append("tx.client_id = %s")
+        params.append(client_id.strip())
+
+    if seller_id:
+        where_parts.append("tx.seller_id = %s")
+        params.append(seller_id.strip())
+
+    if status:
+        clean_status = status.strip().upper()
+
+        if clean_status not in {"APPROVED", "REJECTED"}:
+            raise HTTPException(
+                status_code=400,
+                detail="status debe ser APPROVED o REJECTED"
+            )
+
+        where_parts.append("tx.status = %s")
+        params.append(clean_status)
+
+    if date_from:
+        where_parts.append("tx.created_at >= %s::date")
+        params.append(date_from.strip())
+
+    if date_to:
+        where_parts.append("tx.created_at < (%s::date + interval '1 day')")
+        params.append(date_to.strip())
+
+    where_sql = ""
+
+    if where_parts:
+        where_sql = " where " + " and ".join(where_parts)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                f"""
+                select
+                    tx.id,
+                    tx.token_hash,
+                    tx.client_id,
+                    client.full_name as client_name,
+                    tx.seller_id,
+                    seller.full_name as seller_name,
+                    seller.commerce_name as seller_commerce_name,
+                    tx.amount_cop,
+                    tx.status,
+                    tx.rejection_reason,
+                    tx.response_time_ms,
+                    tx.created_at
+                from transactions tx
+                left join profiles client
+                    on client.id = tx.client_id
+                join profiles seller
+                    on seller.id = tx.seller_id
+                {where_sql}
+                order by tx.created_at desc
+                """,
+                params
+            )
+
+            rows = cur.fetchall()
+
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "id",
+        "token_hash",
+        "client_id",
+        "client_name",
+        "seller_id",
+        "seller_name",
+        "seller_commerce_name",
+        "amount_cop",
+        "status",
+        "rejection_reason",
+        "response_time_ms",
+        "created_at"
+    ])
+
+    for row in rows:
+        writer.writerow([
+            row["id"],
+            row["token_hash"],
+            row["client_id"],
+            row["client_name"],
+            row["seller_id"],
+            row["seller_name"],
+            row["seller_commerce_name"],
+            row["amount_cop"],
+            row["status"],
+            row["rejection_reason"],
+            row["response_time_ms"],
+            row["created_at"]
+        ])
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=offpay_transactions.csv"
+        }
+    )
 
 
 # ============================================================
@@ -1555,29 +1964,286 @@ def get_transactions():
 
 
 # ============================================================
-# OBTENER INTENTOS INVÁLIDOS
+# ADMIN - OBTENER INTENTOS INVÁLIDOS
 # ============================================================
 
 @app.get("/admin/invalid-attempts")
-def get_invalid_attempts():
+def get_invalid_attempts(
+    seller_id: str | None = None,
+    reason: str | None = None,
+    only_unreviewed: bool = False,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+):
     """
-    Retorna todos los intentos inválidos
-    registrados en el sistema.
+    Retorna intentos inválidos registrados,
+    con filtros y paginación para el panel admin.
+    """
+
+    where_parts = []
+    params = []
+
+    if seller_id:
+        where_parts.append("ia.seller_id = %s")
+        params.append(seller_id.strip())
+
+    if reason:
+        where_parts.append("ia.reason = %s")
+        params.append(reason.strip())
+
+    if only_unreviewed:
+        where_parts.append("coalesce(ia.is_reviewed, false) = false")
+
+    where_sql = ""
+
+    if where_parts:
+        where_sql = " where " + " and ".join(where_parts)
+
+    offset = (page - 1) * page_size
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                f"""
+                select count(*) as total
+                from invalid_attempts ia
+                {where_sql}
+                """,
+                params
+            )
+
+            total = cur.fetchone()["total"]
+
+            cur.execute(
+                f"""
+                select
+                    ia.*,
+                    seller.full_name as seller_name,
+                    seller.commerce_name as seller_commerce_name,
+                    t.status as token_status,
+                    t.client_id as token_client_id
+                from invalid_attempts ia
+                join profiles seller
+                    on seller.id = ia.seller_id
+                left join tokens t
+                    on t.id = ia.token_id
+                {where_sql}
+                order by ia.created_at desc
+                limit %s
+                offset %s
+                """,
+                params + [page_size, offset]
+            )
+
+            rows = cur.fetchall()
+
+            total_pages = 0
+
+            if total > 0:
+                total_pages = (total + page_size - 1) // page_size
+
+            return {
+                "filters": {
+                    "seller_id": seller_id,
+                    "reason": reason,
+                    "only_unreviewed": only_unreviewed
+                },
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages
+                },
+                "invalid_attempts": [dict(row) for row in rows]
+            }
+
+
+# ============================================================
+# ADMIN - ALERTAS DE FRAUDE
+# ============================================================
+
+@app.get("/admin/fraud-alerts")
+def get_fraud_alerts(
+    seller_id: str | None = None,
+    only_unreviewed: bool = False,
+    min_attempts: int = Query(1, ge=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+):
+    """
+    Agrupa intentos inválidos para detectar fraude.
+
+    Una alerta se agrupa por:
+    - token_hash
+    - vendedor
+    - motivo de rechazo
+    """
+
+    where_parts = []
+    params = []
+
+    if seller_id:
+        where_parts.append("ia.seller_id = %s")
+        params.append(seller_id.strip())
+
+    if only_unreviewed:
+        where_parts.append("coalesce(ia.is_reviewed, false) = false")
+
+    where_sql = ""
+
+    if where_parts:
+        where_sql = " where " + " and ".join(where_parts)
+
+    offset = (page - 1) * page_size
+
+    group_sql = f"""
+        from invalid_attempts ia
+        join profiles seller
+            on seller.id = ia.seller_id
+        {where_sql}
+        group by
+            ia.token_hash,
+            ia.seller_id,
+            seller.full_name,
+            seller.commerce_name,
+            ia.reason
+        having count(*) >= %s
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
 
             cur.execute(
-                """
-                select *
-                from invalid_attempts
-                order by created_at desc
-                """
+                f"""
+                select count(*) as total
+                from (
+                    select 1
+                    {group_sql}
+                ) grouped_alerts
+                """,
+                params + [min_attempts]
+            )
+
+            total = cur.fetchone()["total"]
+
+            cur.execute(
+                f"""
+                select
+                    ia.token_hash,
+                    ia.seller_id,
+                    seller.full_name as seller_name,
+                    seller.commerce_name as seller_commerce_name,
+                    ia.reason,
+                    count(*)::int as attempt_count,
+                    sum(
+                        case
+                            when coalesce(ia.is_reviewed, false) = false
+                            then 1
+                            else 0
+                        end
+                    )::int as unreviewed_count,
+                    min(ia.created_at) as first_attempt_at,
+                    max(ia.created_at) as last_attempt_at,
+                    case
+                        when count(*) >= 3 then 'HIGH'
+                        when count(*) = 2 then 'MEDIUM'
+                        else 'LOW'
+                    end as risk_level
+                {group_sql}
+                order by
+                    attempt_count desc,
+                    last_attempt_at desc
+                limit %s
+                offset %s
+                """,
+                params + [min_attempts, page_size, offset]
             )
 
             rows = cur.fetchall()
 
+            total_pages = 0
+
+            if total > 0:
+                total_pages = (total + page_size - 1) // page_size
+
             return {
-                "invalid_attempts": [dict(row) for row in rows]
+                "filters": {
+                    "seller_id": seller_id,
+                    "only_unreviewed": only_unreviewed,
+                    "min_attempts": min_attempts
+                },
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages
+                },
+                "alerts": [dict(row) for row in rows]
             }
+
+
+# ============================================================
+# ADMIN - MARCAR INTENTO INVÁLIDO COMO REVISADO
+# ============================================================
+
+@app.post("/admin/invalid-attempts/{attempt_id}/review")
+def review_invalid_attempt(
+    attempt_id: str,
+    data: ReviewInvalidAttemptRequest
+):
+    """
+    Marca un intento inválido como revisado.
+    """
+
+    clean_attempt_id = attempt_id.strip()
+
+    with get_conn() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    update invalid_attempts
+                    set
+                        is_reviewed = true,
+                        reviewed_at = now(),
+                        review_note = %s
+                    where id = %s
+                    returning *
+                    """,
+                    (
+                        data.review_note,
+                        clean_attempt_id
+                    )
+                )
+
+                row = cur.fetchone()
+
+                if not row:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Intento inválido no encontrado"
+                    )
+
+                conn.commit()
+
+                return {
+                    "message": "Intento inválido marcado como revisado",
+                    "invalid_attempt": dict(row)
+                }
+
+        except HTTPException:
+
+            conn.rollback()
+            raise
+
+        except Exception as e:
+
+            conn.rollback()
+
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+
