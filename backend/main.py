@@ -824,25 +824,28 @@ def generate_tokens(data: GenerateTokensRequest):
 # ============================================================
 
 @app.get("/tokens/client/{client_id}")
-def get_client_tokens(client_id: str):
+def get_client_tokens(client_id: str, sort: str = "counter_asc"):
     """
-<<<<<<< HEAD
-    Retorna todos los tokens de un cliente específico,
-    ordenados por fecha de creación descendente.
-    """
-    clean_id = client_id.strip()
-=======
-    Retorna todos los tokens de un cliente,
-    ordenados por counter ascendente.
+    Retorna todos los tokens de un cliente.
+
+    sort soporta:
+    - counter_asc   -> ?til para la app cliente
+    - created_desc -> ?til para panel admin
     """
 
     clean_client_id = client_id.strip()
->>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
+
+    allowed_sorts = {
+        "counter_asc": "counter asc",
+        "created_desc": "created_at desc"
+    }
+
+    order_by = allowed_sorts.get(sort, "counter asc")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 select
                     id,
                     client_id,
@@ -852,32 +855,13 @@ def get_client_tokens(client_id: str):
                     value_cop,
                     status,
                     blockchain_status,
-<<<<<<< HEAD
                     chain_id,
-=======
->>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
                     created_at,
                     used_at,
                     returned_at
                 from tokens
                 where client_id = %s
-<<<<<<< HEAD
-                order by created_at desc
-                """,
-                (clean_id,)
-            )
-            rows = cur.fetchall()
-
-            if not rows:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No se encontraron tokens para este cliente"
-                )
-
-            return {
-                "client_id": clean_id,
-=======
-                order by counter asc
+                order by {order_by}
                 """,
                 (clean_client_id,)
             )
@@ -886,9 +870,9 @@ def get_client_tokens(client_id: str):
 
             return {
                 "client_id": clean_client_id,
->>>>>>> cffe50783c38a4b225211dc48efcdb30e51ea3af
                 "tokens": [dict(row) for row in rows]
             }
+
 
 @app.post("/tokens/refund")
 def refund_token(data: RefundTokenRequest):
