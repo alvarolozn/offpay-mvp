@@ -1,0 +1,22 @@
+# Versión del formato de configuración de ngrok
+version: "3"
+
+# Configuración general del agente ngrok
+agent:
+  # Token de autenticación de tu cuenta ngrok
+  # Permite conectar el cliente local con tu cuenta
+  authtoken: 3Dyn7RWvZG5qYhHDZgXTfomKlil_6ApvW1EfbCgR4NQfC5fgR
+
+# Sección donde se definen los túneles
+tunnels:
+
+  # Nombre del túnel (puede ser cualquier nombre)
+  frontend:
+
+    # Puerto local que ngrok expondrá a internet
+    # En este caso, el frontend corre en el puerto 5173
+    addr: 5173
+
+    # Tipo de protocolo usado
+    # http = aplicación web
+    proto: http
