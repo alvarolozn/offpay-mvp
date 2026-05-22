@@ -420,6 +420,9 @@ fun ClienteScreen(
     var localTokenCountTotal by remember { mutableStateOf(0) }
     var localTokenCountAvailable by remember { mutableStateOf(0) }
 
+    var tokenHistory by remember { mutableStateOf(JSONArray()) }
+    val selectedRefundCodes = remember { mutableStateListOf<String>() }
+
     var generatedPayload by remember { mutableStateOf("") }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
@@ -449,6 +452,22 @@ fun ClienteScreen(
         tokenPrefs.edit()
             .putString("local_tokens_json", root.toString())
             .apply()
+    }
+
+    fun getLocalStatusByTokenId(): Map<String, String> {
+        val root = getLocalTokensRoot()
+        val tokens = root.optJSONArray("tokens") ?: JSONArray()
+        val result = mutableMapOf<String, String>()
+
+        for (i in 0 until tokens.length()) {
+            val token = tokens.getJSONObject(i)
+            val tokenId = token.optString("id", "")
+            if (tokenId.isNotBlank()) {
+                result[tokenId] = token.optString("local_status", "AVAILABLE")
+            }
+        }
+
+        return result
     }
 
     fun refreshLocalTokenStats() {
@@ -494,7 +513,9 @@ fun ClienteScreen(
             val tokenId = token.optString("id")
 
             if (backendStatus == "AVAILABLE") {
-                val preservedLocalStatus = oldLocalStatusById[tokenId] ?: "AVAILABLE"
+                val preservedLocalStatus = oldLocalStatusById[tokenId]
+                    ?: token.optString("local_status", "AVAILABLE")
+
                 token.put("local_status", preservedLocalStatus)
                 cleanedTokens.add(token)
             }
@@ -513,7 +534,7 @@ fun ClienteScreen(
         saveLocalTokensRoot(newRoot)
     }
 
-    fun fetchAvailableBackendTokens(cleanBackendUrl: String, cleanClientId: String): JSONArray {
+    fun fetchClientTokensFromBackend(cleanBackendUrl: String, cleanClientId: String): JSONArray {
         val url = URL("$cleanBackendUrl/tokens/client/$cleanClientId")
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
@@ -534,6 +555,140 @@ fun ClienteScreen(
 
         val backendRoot = JSONObject(responseText)
         return backendRoot.optJSONArray("tokens") ?: JSONArray()
+    }
+
+    fun fetchWalletObject(cleanBackendUrl: String, userId: String): JSONObject {
+        val url = URL("$cleanBackendUrl/wallets/$userId")
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 60000
+        connection.readTimeout = 60000
+        connection.setRequestProperty("Accept", "application/json")
+
+        val responseCode = connection.responseCode
+        val responseText = if (responseCode in 200..299) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        }
+
+        if (responseCode !in 200..299) {
+            throw Exception("Error HTTP al consultar wallet: $responseCode")
+        }
+
+        return JSONObject(responseText)
+    }
+
+    fun fetchTransactionsByTokenId(
+        cleanBackendUrl: String,
+        cleanClientId: String
+    ): Map<String, JSONObject> {
+        return try {
+            val url = URL("$cleanBackendUrl/transactions")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 60000
+            connection.readTimeout = 60000
+            connection.setRequestProperty("Accept", "application/json")
+
+            val responseCode = connection.responseCode
+            val responseText = if (responseCode in 200..299) {
+                connection.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            }
+
+            if (responseCode !in 200..299) {
+                emptyMap()
+            } else {
+                val root = JSONObject(responseText)
+                val transactions = root.optJSONArray("transactions") ?: JSONArray()
+                val result = mutableMapOf<String, JSONObject>()
+
+                for (i in 0 until transactions.length()) {
+                    val transaction = transactions.getJSONObject(i)
+                    val txClientId = transaction.optString("client_id", "")
+                    val tokenId = transaction.optString("token_id", "")
+
+                    if (txClientId == cleanClientId && tokenId.isNotBlank()) {
+                        result[tokenId] = transaction
+                    }
+                }
+
+                result
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun fetchSellerCommerceName(cleanBackendUrl: String, sellerId: String): String {
+        if (sellerId.isBlank()) return ""
+
+        return try {
+            val sellerWallet = fetchWalletObject(cleanBackendUrl, sellerId)
+            sellerWallet.optString("commerce_name", "")
+                .ifBlank { sellerWallet.optString("full_name", "") }
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun buildTokenHistoryForClient(cleanBackendUrl: String, cleanClientId: String): JSONArray {
+        val backendTokens = fetchClientTokensFromBackend(cleanBackendUrl, cleanClientId)
+        val localStatusById = getLocalStatusByTokenId()
+        val transactionsByTokenId = fetchTransactionsByTokenId(cleanBackendUrl, cleanClientId)
+        val commerceCache = mutableMapOf<String, String>()
+
+        for (i in 0 until backendTokens.length()) {
+            val token = backendTokens.getJSONObject(i)
+            val tokenId = token.optString("id", "")
+            val status = token.optString("status", "")
+
+            if (status == "AVAILABLE") {
+                token.put("local_status", localStatusById[tokenId] ?: "AVAILABLE")
+            } else {
+                token.put("local_status", "-")
+            }
+
+            if (status == "USED") {
+                val transaction = transactionsByTokenId[tokenId]
+                if (transaction != null) {
+                    val sellerId = transaction.optString("seller_id", "")
+                    token.put("seller_id", sellerId)
+                    token.put("used_transaction_id", transaction.optString("id", ""))
+
+                    if (sellerId.isNotBlank()) {
+                        val commerceName = commerceCache.getOrPut(sellerId) {
+                            fetchSellerCommerceName(cleanBackendUrl, sellerId)
+                        }
+
+                        if (commerceName.isNotBlank()) {
+                            token.put("commerce_name", commerceName)
+                        }
+                    }
+                }
+            }
+        }
+
+        return backendTokens
+    }
+
+    fun refreshTokenHistoryLocalStatusesOnly() {
+        val localStatusById = getLocalStatusByTokenId()
+        val updatedHistory = JSONArray(tokenHistory.toString())
+
+        for (i in 0 until updatedHistory.length()) {
+            val token = updatedHistory.getJSONObject(i)
+            val tokenId = token.optString("id", "")
+            val status = token.optString("status", "")
+
+            if (status == "AVAILABLE") {
+                token.put("local_status", localStatusById[tokenId] ?: "AVAILABLE")
+            }
+        }
+
+        tokenHistory = updatedHistory
     }
 
     fun generateQrBitmap(content: String): Bitmap {
@@ -617,22 +772,24 @@ fun ClienteScreen(
 
     fun syncLocalTokensFromBackend() {
         loading = true
-        statusMessage = "Sincronizando tokens locales..."
+        statusMessage = "Sincronizando tokens locales e historial..."
 
         thread {
             try {
                 val cleanBackendUrl = backendUrl.trim()
                 val cleanClientId = clientId.trim()
 
-                val backendTokens = fetchAvailableBackendTokens(cleanBackendUrl, cleanClientId)
+                val backendTokens = buildTokenHistoryForClient(cleanBackendUrl, cleanClientId)
                 replaceLocalTokensWithBackendAvailable(backendTokens)
 
                 mainHandler.post {
                     loading = false
+                    tokenHistory = backendTokens
+                    selectedRefundCodes.clear()
                     refreshLocalTokenStats()
                     generatedPayload = ""
                     qrBitmap = null
-                    statusMessage = "Tokens locales sincronizados correctamente"
+                    statusMessage = "Tokens locales e historial sincronizados correctamente"
                 }
             } catch (e: Exception) {
                 mainHandler.post {
@@ -645,43 +802,21 @@ fun ClienteScreen(
 
     fun loadWallet() {
         loading = true
-        statusMessage = "Consultando wallet..."
+        statusMessage = "Consultando wallet e historial..."
 
         thread {
             try {
                 val cleanBackendUrl = backendUrl.trim()
                 val cleanClientId = clientId.trim()
 
-                val url = URL("$cleanBackendUrl/wallets/$cleanClientId")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 60000
-                connection.readTimeout = 60000
-                connection.setRequestProperty("Accept", "application/json")
-
-                val responseCode = connection.responseCode
-                val responseText = if (responseCode in 200..299) {
-                    connection.inputStream.bufferedReader().use { it.readText() }
-                } else {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                }
-
-                if (responseCode !in 200..299) {
-                    mainHandler.post {
-                        loading = false
-                        statusMessage = "Error HTTP: $responseCode"
-                    }
-                    return@thread
-                }
-
-                val obj = JSONObject(responseText)
+                val obj = fetchWalletObject(cleanBackendUrl, cleanClientId)
 
                 val newFullName = obj.optString("full_name", "")
                 val newRole = obj.optString("role", "")
                 val newAvailable = obj.optLong("available_balance_cop", 0).toString()
                 val newBlocked = obj.optLong("blocked_balance_cop", 0).toString()
 
-                val backendTokens = fetchAvailableBackendTokens(cleanBackendUrl, cleanClientId)
+                val backendTokens = buildTokenHistoryForClient(cleanBackendUrl, cleanClientId)
                 replaceLocalTokensWithBackendAvailable(backendTokens)
 
                 mainHandler.post {
@@ -690,7 +825,9 @@ fun ClienteScreen(
                     role = newRole
                     availableBalance = newAvailable
                     blockedBalance = newBlocked
-                    statusMessage = "Wallet cargada correctamente"
+                    tokenHistory = backendTokens
+                    selectedRefundCodes.clear()
+                    statusMessage = "Wallet e historial cargados correctamente"
                     refreshLocalTokenStats()
                 }
             } catch (e: Exception) {
@@ -825,7 +962,7 @@ fun ClienteScreen(
                 val generateObj = JSONObject(generateText)
                 val wallet = generateObj.getJSONObject("wallet")
 
-                val backendTokens = fetchAvailableBackendTokens(cleanBackendUrl, cleanClientId)
+                val backendTokens = buildTokenHistoryForClient(cleanBackendUrl, cleanClientId)
                 replaceLocalTokensWithBackendAvailable(backendTokens)
 
                 val newAvailable = wallet.optLong("available_balance_cop", 0).toString()
@@ -835,10 +972,12 @@ fun ClienteScreen(
                     loading = false
                     availableBalance = newAvailable
                     blockedBalance = newBlocked
+                    tokenHistory = backendTokens
+                    selectedRefundCodes.clear()
                     generatedPayload = ""
                     qrBitmap = null
                     refreshLocalTokenStats()
-                    statusMessage = "Saldo offline preparado y tokens resincronizados correctamente"
+                    statusMessage = "Saldo offline preparado e historial actualizado correctamente"
                 }
             } catch (e: Exception) {
                 mainHandler.post {
@@ -866,6 +1005,8 @@ fun ClienteScreen(
             val payload = buildPaymentPayload(amount)
             generatedPayload = payload
             qrBitmap = generateQrBitmap(payload)
+            selectedRefundCodes.clear()
+            refreshTokenHistoryLocalStatusesOnly()
             statusMessage = "Payload y QR generados correctamente"
         } catch (e: Exception) {
             qrBitmap = null
@@ -873,7 +1014,149 @@ fun ClienteScreen(
         }
     }
 
+    fun refundOneToken(cleanBackendUrl: String, cleanClientId: String, paymentCode: String) {
+        val url = URL("$cleanBackendUrl/tokens/refund")
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 60000
+        connection.readTimeout = 60000
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+        connection.setRequestProperty("Accept", "application/json")
+
+        val requestBody = JSONObject().apply {
+            put("client_id", cleanClientId)
+            put("payment_code", paymentCode)
+        }.toString()
+
+        BufferedWriter(OutputStreamWriter(connection.outputStream, "UTF-8")).use { writer ->
+            writer.write(requestBody)
+            writer.flush()
+        }
+
+        val responseCode = connection.responseCode
+        val responseText = if (responseCode in 200..299) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        }
+
+        if (responseCode !in 200..299) {
+            val detail = try {
+                JSONObject(responseText).optString("detail", responseText)
+            } catch (_: Exception) {
+                responseText
+            }
+
+            throw Exception("HTTP $responseCode al devolver token: $detail")
+        }
+    }
+
+    fun refundSelectedTokens() {
+        if (selectedRefundCodes.isEmpty()) {
+            statusMessage = "Selecciona al menos un token AVAILABLE para devolver."
+            return
+        }
+
+        loading = true
+        statusMessage = "Devolviendo tokens seleccionados..."
+
+        val codesToRefund = selectedRefundCodes.toList()
+
+        thread {
+            var refundedCount = 0
+
+            try {
+                val cleanBackendUrl = backendUrl.trim()
+                val cleanClientId = clientId.trim()
+
+                for (paymentCode in codesToRefund) {
+                    refundOneToken(cleanBackendUrl, cleanClientId, paymentCode)
+                    refundedCount++
+                }
+
+                val wallet = fetchWalletObject(cleanBackendUrl, cleanClientId)
+                val backendTokens = buildTokenHistoryForClient(cleanBackendUrl, cleanClientId)
+                replaceLocalTokensWithBackendAvailable(backendTokens)
+
+                val newAvailable = wallet.optLong("available_balance_cop", 0).toString()
+                val newBlocked = wallet.optLong("blocked_balance_cop", 0).toString()
+
+                mainHandler.post {
+                    loading = false
+                    availableBalance = newAvailable
+                    blockedBalance = newBlocked
+                    tokenHistory = backendTokens
+                    selectedRefundCodes.clear()
+                    generatedPayload = ""
+                    qrBitmap = null
+                    refreshLocalTokenStats()
+                    statusMessage = "$refundedCount token(es) devuelto(s) correctamente"
+                }
+            } catch (e: Exception) {
+                try {
+                    val cleanBackendUrl = backendUrl.trim()
+                    val cleanClientId = clientId.trim()
+                    val wallet = fetchWalletObject(cleanBackendUrl, cleanClientId)
+                    val backendTokens = buildTokenHistoryForClient(cleanBackendUrl, cleanClientId)
+                    replaceLocalTokensWithBackendAvailable(backendTokens)
+
+                    mainHandler.post {
+                        loading = false
+                        availableBalance = wallet.optLong("available_balance_cop", 0).toString()
+                        blockedBalance = wallet.optLong("blocked_balance_cop", 0).toString()
+                        tokenHistory = backendTokens
+                        selectedRefundCodes.clear()
+                        refreshLocalTokenStats()
+                        statusMessage = "Se devolvieron $refundedCount token(es), pero ocurrió un error: ${e.message}"
+                    }
+                } catch (_: Exception) {
+                    mainHandler.post {
+                        loading = false
+                        statusMessage = "Error devolviendo tokens: ${e.message}"
+                    }
+                }
+            }
+        }
+    }
+
+    fun tokenStatusCount(status: String): Int {
+        var count = 0
+        for (i in 0 until tokenHistory.length()) {
+            val token = tokenHistory.getJSONObject(i)
+            if (token.optString("status", "") == status) count++
+        }
+        return count
+    }
+
+    fun tokenDisplayValue(token: JSONObject): String {
+        return "${token.optLong("value_cop", 0)} COP"
+    }
+
+    fun tokenDisplayDate(token: JSONObject): String {
+        return token.optString("created_at", "-")
+    }
+
+    fun tokenDisplayCommerce(token: JSONObject): String {
+        val status = token.optString("status", "")
+        val commerceName = token.optString("commerce_name", "")
+            .ifBlank { token.optString("seller_commerce_name", "") }
+            .ifBlank { token.optString("commerce_used", "") }
+        val sellerId = token.optString("seller_id", "")
+
+        return when {
+            commerceName.isNotBlank() -> commerceName
+            sellerId.isNotBlank() -> "Seller ID: $sellerId"
+            status == "USED" -> "Pendiente: el backend no retornó comercio"
+            else -> "-"
+        }
+    }
+
     val blockedExpectedTokens = blockedBalance.toLongOrNull()?.div(10000) ?: 0
+    val availableHistoryCount = tokenStatusCount("AVAILABLE")
+    val usedHistoryCount = tokenStatusCount("USED")
+    val returnedHistoryCount = tokenStatusCount("RETURNED")
+    val selectedRefundTotal = selectedRefundCodes.size * 10000
 
     LaunchedEffect(Unit) {
         refreshLocalTokenStats()
@@ -895,7 +1178,7 @@ fun ClienteScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = "Aquí vamos a consultar wallet, recargar, preparar offline, sincronizar tokens y generar el QR del pago.",
+            text = "Aquí vamos a consultar wallet, recargar, preparar offline, sincronizar tokens, generar QR, ver historial y devolver tokens disponibles.",
             style = MaterialTheme.typography.bodyLarge
         )
 
@@ -925,7 +1208,7 @@ fun ClienteScreen(
             enabled = !loading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (loading) "Consultando..." else "Consultar saldo")
+            Text(if (loading) "Consultando..." else "Consultar saldo e historial")
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -935,7 +1218,7 @@ fun ClienteScreen(
             enabled = !loading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (loading) "Procesando..." else "Sincronizar tokens locales")
+            Text(if (loading) "Procesando..." else "Sincronizar tokens locales e historial")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1001,11 +1284,12 @@ fun ClienteScreen(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
                 containerColor = if (
-                    statusMessage.startsWith("Wallet cargada") ||
+                    statusMessage.startsWith("Wallet") ||
                     statusMessage.startsWith("Saldo recargado") ||
                     statusMessage.startsWith("Saldo offline preparado") ||
                     statusMessage.startsWith("Payload y QR generados") ||
-                    statusMessage.startsWith("Tokens locales sincronizados")
+                    statusMessage.startsWith("Tokens locales") ||
+                    statusMessage.contains("devuelto")
                 ) {
                     Color(0xFFD8F5D0)
                 } else {
@@ -1042,6 +1326,122 @@ fun ClienteScreen(
         }
 
         Spacer(modifier = Modifier.height(20.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Historial de tokens del cliente", fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("DISPONIBLE: $availableHistoryCount")
+                Text("USADO: $usedHistoryCount")
+                Text("DEVUELTO: $returnedHistoryCount")
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "Seleccionados para devolución: ${selectedRefundCodes.size} token(es) = $selectedRefundTotal COP",
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = { refundSelectedTokens() },
+                    enabled = !loading && selectedRefundCodes.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (loading) "Procesando..." else "Devolver tokens seleccionados")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        val statusGroups = listOf(
+            Triple("DISPONIBLE", "AVAILABLE", Color(0xFFEAF7E8)),
+            Triple("USADO", "USED", Color(0xFFE8F1FF)),
+            Triple("DEVUELTO", "RETURNED", Color(0xFFFFF3D6))
+        )
+
+        for (group in statusGroups) {
+            val groupTitle = group.first
+            val groupStatus = group.second
+            val groupColor = group.third
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = groupColor)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(groupTitle, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    var foundAny = false
+
+                    for (i in 0 until tokenHistory.length()) {
+                        val token = tokenHistory.getJSONObject(i)
+                        val status = token.optString("status", "")
+
+                        if (status == groupStatus) {
+                            foundAny = true
+                            val paymentCode = token.optString("payment_code", "")
+                            val tokenId = token.optString("id", "-")
+                            val localStatus = token.optString("local_status", "-")
+                            val isSelected = selectedRefundCodes.contains(paymentCode)
+                            val canSelectForRefund = status == "AVAILABLE" &&
+                                    paymentCode.isNotBlank() &&
+                                    localStatus == "AVAILABLE"
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF))
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("Token #${token.optLong("counter", 0)}", fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text("Valor: ${tokenDisplayValue(token)}")
+                                    Text("Fecha de creación: ${tokenDisplayDate(token)}")
+                                    Text("Estado actual: $status")
+                                    Text("Estado local: $localStatus")
+                                    Text("Comercio donde fue usado: ${tokenDisplayCommerce(token)}")
+                                    Text("ID: $tokenId")
+
+                                    if (canSelectForRefund) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                if (isSelected) {
+                                                    selectedRefundCodes.remove(paymentCode)
+                                                } else {
+                                                    selectedRefundCodes.add(paymentCode)
+                                                }
+                                            },
+                                            enabled = !loading,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(if (isSelected) "Quitar de devolución" else "Seleccionar para devolver")
+                                        }
+                                    } else if (status == "AVAILABLE" && localStatus != "AVAILABLE") {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Este token no se puede devolver ahora porque ya fue expuesto localmente en un QR.")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!foundAny) {
+                        Text("No hay tokens en este estado.")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         if (qrBitmap != null) {
             Card(
@@ -1091,6 +1491,7 @@ fun ClienteScreen(
         }
     }
 }
+
 
 @Composable
 fun VendedorScreen(
