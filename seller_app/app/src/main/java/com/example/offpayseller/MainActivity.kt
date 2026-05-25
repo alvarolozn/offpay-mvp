@@ -9,6 +9,13 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -171,56 +178,291 @@ fun OffPayApp() {
     }
 }
 
+
+private val OffPayBackground = Color(0xFFF4F7FB)
+private val OffPayPrimary = Color(0xFF155EEF)
+private val OffPayPrimaryDark = Color(0xFF0B3B8F)
+private val OffPayAccent = Color(0xFF00A676)
+private val OffPayWarning = Color(0xFFFFB020)
+private val OffPayDanger = Color(0xFFD92D20)
+private val OffPayCardColor = Color(0xFFFFFFFF)
+private val OffPayMuted = Color(0xFF667085)
+private val OffPaySoftBlue = Color(0xFFEAF1FF)
+private val OffPaySoftGreen = Color(0xFFEAF7E8)
+private val OffPaySoftYellow = Color(0xFFFFF6DF)
+private val OffPaySoftRed = Color(0xFFFFEAEA)
+
+@Composable
+fun OffPayPage(
+    title: String,
+    subtitle: String,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OffPayBackground)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 22.dp),
+        verticalArrangement = Arrangement.Top
+    ) {
+        Text(
+            text = "OffPay",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = OffPayPrimary
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF101828)
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = OffPayMuted
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        content()
+    }
+}
+
+@Composable
+fun OffPayCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String = "",
+    containerColor: Color = OffPayCardColor,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF101828)
+            )
+
+            if (subtitle.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OffPayMuted
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+fun OffPayPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = OffPayPrimary,
+            contentColor = Color.White,
+            disabledContainerColor = Color(0xFFCBD5E1),
+            disabledContentColor = Color.White
+        )
+    ) {
+        Text(text = text, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+fun OffPaySecondaryButton(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFFEAF1FF),
+            contentColor = OffPayPrimaryDark,
+            disabledContainerColor = Color(0xFFE4E7EC),
+            disabledContentColor = Color(0xFF98A2B3)
+        )
+    ) {
+        Text(text = text, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+fun InfoLine(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = OffPayMuted,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFF101828)
+        )
+    }
+}
+
+@Composable
+fun MiniStat(
+    title: String,
+    value: String,
+    containerColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodySmall,
+                color = OffPayMuted,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color(0xFF101828),
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+fun StatusMessageCard(message: String) {
+    val isSuccess = message.startsWith("Wallet") ||
+            message.startsWith("Saldo recargado") ||
+            message.startsWith("Saldo offline preparado") ||
+            message.startsWith("Payload y QR generados") ||
+            message.startsWith("Tokens locales") ||
+            message.contains("devuelto")
+
+    val bg = if (isSuccess) OffPaySoftGreen else Color(0xFFF9FAFB)
+    val title = if (isSuccess) "Operación exitosa" else "Estado actual"
+
+    OffPayCard(
+        title = title,
+        containerColor = bg
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFF101828)
+        )
+    }
+}
+
+
 @Composable
 fun HomeScreen(
     onClienteClick: () -> Unit,
     onVendedorClick: () -> Unit,
     onConfigClick: () -> Unit
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(OffPayBackground)
             .padding(24.dp),
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "OffPay",
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "Selecciona cómo quieres entrar",
-            style = MaterialTheme.typography.bodyLarge
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(
-            onClick = onClienteClick,
-            modifier = Modifier.fillMaxWidth()
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.Center
         ) {
-            Text("Entrar como Cliente")
-        }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = OffPayCardColor),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text(
+                        text = "OffPay",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = OffPayPrimary
+                    )
 
-        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-        Button(
-            onClick = onVendedorClick,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Entrar como Vendedor")
-        }
+                    Text(
+                        text = "Pagos offline seguros para clientes y comercios.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = OffPayMuted
+                    )
 
-        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(28.dp))
 
-        Button(
-            onClick = onConfigClick,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Configuración")
+                    OffPayPrimaryButton(
+                        text = "Entrar como Cliente",
+                        onClick = onClienteClick
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OffPaySecondaryButton(
+                        text = "Entrar como Vendedor",
+                        onClick = onVendedorClick
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OffPaySecondaryButton(
+                        text = "Configuración",
+                        onClick = onConfigClick
+                    )
+                }
+            }
         }
     }
 }
@@ -325,72 +567,47 @@ fun DemoLoginScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center
+    OffPayPage(
+        title = title,
+        subtitle = "Accede con el usuario demo asignado para continuar."
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "Rol esperado: $role",
-            style = MaterialTheme.typography.bodyLarge
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Username de prueba: $exampleUsername",
-            style = MaterialTheme.typography.bodyMedium
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        OutlinedTextField(
-            value = username,
-            onValueChange = { username = it },
-            label = { Text("Username") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = { doDemoLogin() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
+        OffPayCard(
+            title = "Inicio de sesión",
+            subtitle = "Rol esperado: $role"
         ) {
-            Text(if (loading) "Ingresando..." else "Ingresar")
+            InfoLine(label = "Backend", value = backendUrl)
+            Spacer(modifier = Modifier.height(12.dp))
+            InfoLine(label = "Usuario de prueba", value = exampleUsername)
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Username") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OffPayPrimaryButton(
+                text = if (loading) "Ingresando..." else "Ingresar",
+                onClick = { doDemoLogin() },
+                enabled = !loading
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Estado", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(statusMessage)
-            }
-        }
+        StatusMessageCard(statusMessage)
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Volver")
-        }
+        OffPaySecondaryButton(
+            text = "Volver",
+            onClick = onBack
+        )
     }
 }
 
@@ -1165,204 +1382,255 @@ fun ClienteScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
+            .background(OffPayBackground)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 22.dp),
         verticalArrangement = Arrangement.Top
     ) {
         Text(
-            text = "Modo Cliente",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
+            text = "OffPay",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = OffPayPrimary
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Aquí vamos a consultar wallet, recargar, preparar offline, sincronizar tokens, generar QR, ver historial y devolver tokens disponibles.",
-            style = MaterialTheme.typography.bodyLarge
+            text = "Billetera del cliente",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF101828)
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = "Administra saldo, tokens offline, pagos QR, historial y devoluciones.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = OffPayMuted
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
+        OffPayCard(
+            title = "Cuenta conectada",
+            subtitle = "Información técnica de la sesión actual"
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Backend", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(backendUrl)
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Client ID", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(clientId)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Button(
-            onClick = { loadWallet() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Consultando..." else "Consultar saldo e historial")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = { syncLocalTokensFromBackend() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Procesando..." else "Sincronizar tokens locales e historial")
+            InfoLine(label = "Backend", value = backendUrl)
+            Spacer(modifier = Modifier.height(12.dp))
+            InfoLine(label = "Client ID", value = clientId)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        OutlinedTextField(
-            value = rechargeAmount,
-            onValueChange = { rechargeAmount = it },
-            label = { Text("Monto a recargar") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = { rechargeWallet() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Procesando..." else "Recargar saldo")
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        OutlinedTextField(
-            value = offlineAmount,
-            onValueChange = { offlineAmount = it },
-            label = { Text("Monto a apartar offline") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = { prepareOfflineBalance() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Procesando..." else "Preparar saldo offline")
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        OutlinedTextField(
-            value = payAmount,
-            onValueChange = { payAmount = it },
-            label = { Text("Monto a pagar") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = { prepareLocalPayment() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Generar pago local")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (
-                    statusMessage.startsWith("Wallet") ||
-                    statusMessage.startsWith("Saldo recargado") ||
-                    statusMessage.startsWith("Saldo offline preparado") ||
-                    statusMessage.startsWith("Payload y QR generados") ||
-                    statusMessage.startsWith("Tokens locales") ||
-                    statusMessage.contains("devuelto")
-                ) {
-                    Color(0xFFD8F5D0)
-                } else {
-                    Color(0xFFF5F5F5)
-                }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            MiniStat(
+                title = "Disponible",
+                value = if (availableBalance.isBlank()) "-" else "$availableBalance COP",
+                containerColor = OffPaySoftGreen,
+                modifier = Modifier.weight(1f)
             )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Estado", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(statusMessage)
-            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            MiniStat(
+                title = "Bloqueado",
+                value = if (blockedBalance.isBlank()) "-" else "$blockedBalance COP",
+                containerColor = OffPaySoftBlue,
+                modifier = Modifier.weight(1f)
+            )
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
+        OffPayCard(
+            title = "Acciones rápidas",
+            subtitle = "Consulta y sincroniza antes de generar pagos o devoluciones."
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Datos del cliente", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Nombre: ${if (fullName.isBlank()) "-" else fullName}")
-                Text("Rol: ${if (role.isBlank()) "-" else role}")
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Saldo disponible: ${if (availableBalance.isBlank()) "-" else "$availableBalance COP"}")
-                Text("Saldo bloqueado: ${if (blockedBalance.isBlank()) "-" else "$blockedBalance COP"}")
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Tokens locales guardados (debe coincidir con saldo bloqueado/10000): $localTokenCountTotal")
-                Text("Tokens disponibles para pagar ahora: $localTokenCountAvailable")
-                Text("Tokens esperados por saldo bloqueado: $blockedExpectedTokens")
-            }
+            OffPayPrimaryButton(
+                text = if (loading) "Consultando..." else "Consultar saldo e historial",
+                onClick = { loadWallet() },
+                enabled = !loading
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OffPaySecondaryButton(
+                text = if (loading) "Procesando..." else "Sincronizar tokens locales e historial",
+                onClick = { syncLocalTokensFromBackend() },
+                enabled = !loading
+            )
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
+        StatusMessageCard(statusMessage)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Recargar saldo",
+            subtitle = "Aumenta el saldo disponible del cliente."
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Historial de tokens del cliente", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("DISPONIBLE: $availableHistoryCount")
-                Text("USADO: $usedHistoryCount")
-                Text("DEVUELTO: $returnedHistoryCount")
+            OutlinedTextField(
+                value = rechargeAmount,
+                onValueChange = { rechargeAmount = it },
+                label = { Text("Monto a recargar") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
 
-                Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                Text(
-                    text = "Seleccionados para devolución: ${selectedRefundCodes.size} token(es) = $selectedRefundTotal COP",
-                    fontWeight = FontWeight.Bold
+            OffPayPrimaryButton(
+                text = if (loading) "Procesando..." else "Recargar saldo",
+                onClick = { rechargeWallet() },
+                enabled = !loading
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Preparar saldo offline",
+            subtitle = "Aparta saldo y genera tokens para pagar sin internet."
+        ) {
+            OutlinedTextField(
+                value = offlineAmount,
+                onValueChange = { offlineAmount = it },
+                label = { Text("Monto a apartar offline") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OffPayPrimaryButton(
+                text = if (loading) "Procesando..." else "Preparar saldo offline",
+                onClick = { prepareOfflineBalance() },
+                enabled = !loading
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Pago local",
+            subtitle = "Selecciona tokens disponibles y genera el QR del pago."
+        ) {
+            OutlinedTextField(
+                value = payAmount,
+                onValueChange = { payAmount = it },
+                label = { Text("Monto a pagar") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OffPayPrimaryButton(
+                text = "Generar pago local",
+                onClick = { prepareLocalPayment() },
+                enabled = !loading
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Resumen del cliente",
+            subtitle = "Estado actual de la billetera y tokens locales."
+        ) {
+            InfoLine(label = "Nombre", value = if (fullName.isBlank()) "-" else fullName)
+            Spacer(modifier = Modifier.height(10.dp))
+            InfoLine(label = "Rol", value = if (role.isBlank()) "-" else role)
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Row(modifier = Modifier.fillMaxWidth()) {
+                MiniStat(
+                    title = "Locales",
+                    value = localTokenCountTotal.toString(),
+                    containerColor = OffPaySoftBlue,
+                    modifier = Modifier.weight(1f)
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
-                Button(
-                    onClick = { refundSelectedTokens() },
-                    enabled = !loading && selectedRefundCodes.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (loading) "Procesando..." else "Devolver tokens seleccionados")
-                }
+                MiniStat(
+                    title = "Para pagar",
+                    value = localTokenCountAvailable.toString(),
+                    containerColor = OffPaySoftGreen,
+                    modifier = Modifier.weight(1f)
+                )
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            MiniStat(
+                title = "Esperados por saldo bloqueado",
+                value = blockedExpectedTokens.toString(),
+                containerColor = Color(0xFFF2F4F7),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Historial y devolución",
+            subtitle = "Tokens clasificados por estado según el backend."
+        ) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                MiniStat(
+                    title = "Disponible",
+                    value = availableHistoryCount.toString(),
+                    containerColor = OffPaySoftGreen,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                MiniStat(
+                    title = "Usado",
+                    value = usedHistoryCount.toString(),
+                    containerColor = OffPaySoftBlue,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                MiniStat(
+                    title = "Devuelto",
+                    value = returnedHistoryCount.toString(),
+                    containerColor = OffPaySoftYellow,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = "Seleccionados para devolución: ${selectedRefundCodes.size} token(es) = $selectedRefundTotal COP",
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF101828)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OffPayPrimaryButton(
+                text = if (loading) "Procesando..." else "Devolver tokens seleccionados",
+                onClick = { refundSelectedTokens() },
+                enabled = !loading && selectedRefundCodes.isNotEmpty()
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         val statusGroups = listOf(
-            Triple("DISPONIBLE", "AVAILABLE", Color(0xFFEAF7E8)),
-            Triple("USADO", "USED", Color(0xFFE8F1FF)),
-            Triple("DEVUELTO", "RETURNED", Color(0xFFFFF3D6))
+            Triple("DISPONIBLE", "AVAILABLE", OffPaySoftGreen),
+            Triple("USADO", "USED", OffPaySoftBlue),
+            Triple("DEVUELTO", "RETURNED", OffPaySoftYellow)
         )
 
         for (group in statusGroups) {
@@ -1370,73 +1638,86 @@ fun ClienteScreen(
             val groupStatus = group.second
             val groupColor = group.third
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = groupColor)
+            OffPayCard(
+                title = groupTitle,
+                subtitle = "Listado de tokens en estado $groupStatus",
+                containerColor = groupColor
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(groupTitle, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
+                var foundAny = false
 
-                    var foundAny = false
+                for (i in 0 until tokenHistory.length()) {
+                    val token = tokenHistory.getJSONObject(i)
+                    val status = token.optString("status", "")
 
-                    for (i in 0 until tokenHistory.length()) {
-                        val token = tokenHistory.getJSONObject(i)
-                        val status = token.optString("status", "")
+                    if (status == groupStatus) {
+                        foundAny = true
+                        val paymentCode = token.optString("payment_code", "")
+                        val tokenId = token.optString("id", "-")
+                        val localStatus = token.optString("local_status", "-")
+                        val isSelected = selectedRefundCodes.contains(paymentCode)
+                        val canSelectForRefund = status == "AVAILABLE" &&
+                                paymentCode.isNotBlank() &&
+                                localStatus == "AVAILABLE"
 
-                        if (status == groupStatus) {
-                            foundAny = true
-                            val paymentCode = token.optString("payment_code", "")
-                            val tokenId = token.optString("id", "-")
-                            val localStatus = token.optString("local_status", "-")
-                            val isSelected = selectedRefundCodes.contains(paymentCode)
-                            val canSelectForRefund = status == "AVAILABLE" &&
-                                    paymentCode.isNotBlank() &&
-                                    localStatus == "AVAILABLE"
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    "Token #${token.optLong("counter", 0)}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF101828)
+                                )
 
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF))
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("Token #${token.optLong("counter", 0)}", fontWeight = FontWeight.Bold)
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text("Valor: ${tokenDisplayValue(token)}")
-                                    Text("Fecha de creación: ${tokenDisplayDate(token)}")
-                                    Text("Estado actual: $status")
-                                    Text("Estado local: $localStatus")
-                                    Text("Comercio donde fue usado: ${tokenDisplayCommerce(token)}")
-                                    Text("ID: $tokenId")
+                                Spacer(modifier = Modifier.height(8.dp))
 
-                                    if (canSelectForRefund) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Button(
-                                            onClick = {
-                                                if (isSelected) {
-                                                    selectedRefundCodes.remove(paymentCode)
-                                                } else {
-                                                    selectedRefundCodes.add(paymentCode)
-                                                }
-                                            },
-                                            enabled = !loading,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(if (isSelected) "Quitar de devolución" else "Seleccionar para devolver")
-                                        }
-                                    } else if (status == "AVAILABLE" && localStatus != "AVAILABLE") {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("Este token no se puede devolver ahora porque ya fue expuesto localmente en un QR.")
-                                    }
+                                InfoLine(label = "Valor", value = tokenDisplayValue(token))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                InfoLine(label = "Fecha de creación", value = tokenDisplayDate(token))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                InfoLine(label = "Estado actual", value = status)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                InfoLine(label = "Estado local", value = localStatus)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                InfoLine(label = "Comercio donde fue usado", value = tokenDisplayCommerce(token))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                InfoLine(label = "ID", value = tokenId)
+
+                                if (canSelectForRefund) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    OffPaySecondaryButton(
+                                        text = if (isSelected) "Quitar de devolución" else "Seleccionar para devolver",
+                                        onClick = {
+                                            if (isSelected) {
+                                                selectedRefundCodes.remove(paymentCode)
+                                            } else {
+                                                selectedRefundCodes.add(paymentCode)
+                                            }
+                                        },
+                                        enabled = !loading
+                                    )
+                                } else if (status == "AVAILABLE" && localStatus != "AVAILABLE") {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Este token no se puede devolver ahora porque ya fue expuesto localmente en un QR.",
+                                        color = OffPayMuted
+                                    )
                                 }
                             }
                         }
                     }
+                }
 
-                    if (!foundAny) {
-                        Text("No hay tokens en este estado.")
-                    }
+                if (!foundAny) {
+                    Text(
+                        text = "No hay tokens en este estado.",
+                        color = OffPayMuted
+                    )
                 }
             }
 
@@ -1444,51 +1725,42 @@ fun ClienteScreen(
         }
 
         if (qrBitmap != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors()
+            OffPayCard(
+                title = "QR del pago",
+                subtitle = "Preséntalo al vendedor para validar el paquete OffPay."
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("QR del pago", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Image(
-                        bitmap = qrBitmap!!.asImageBitmap(),
-                        contentDescription = "QR del pago OffPay",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(320.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Payload del pago", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    if (generatedPayload.isBlank()) {
-                        "Todavía no se ha generado ningún payload."
-                    } else {
-                        generatedPayload
-                    }
+                Image(
+                    bitmap = qrBitmap!!.asImageBitmap(),
+                    contentDescription = "QR del pago OffPay",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp)
                 )
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
+        OffPayCard(
+            title = "Payload del pago",
+            subtitle = "Contenido técnico generado para el QR."
         ) {
-            Text("Volver")
+            Text(
+                if (generatedPayload.isBlank()) {
+                    "Todavía no se ha generado ningún payload."
+                } else {
+                    generatedPayload
+                },
+                color = Color(0xFF101828)
+            )
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        OffPaySecondaryButton(
+            text = "Volver",
+            onClick = onBack
+        )
     }
 }
 
@@ -1625,122 +1897,83 @@ fun VendedorScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.Top
+    OffPayPage(
+        title = "Modo Vendedor",
+        subtitle = "Escanea o pega el paquete QR para validar pagos de forma segura."
     ) {
-        Text(
-            text = "Modo Vendedor",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-            text = "Aquí vamos a escanear o pegar el JSON del QR y validar el pago contra el backend.",
-            style = MaterialTheme.typography.bodyLarge
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
+        OffPayCard(
+            title = "Comercio conectado",
+            subtitle = "Datos de operación"
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Backend", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(backendUrl)
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Seller ID", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(sellerId)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Button(
-            onClick = { scanQr() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Escanear QR")
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = qrJsonText,
-            onValueChange = { qrJsonText = it },
-            label = { Text("JSON del QR") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Button(
-            onClick = { validatePaymentPackage() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Validando..." else "Validar pago")
+            InfoLine(label = "Backend", value = backendUrl)
+            Spacer(modifier = Modifier.height(12.dp))
+            InfoLine(label = "Seller ID", value = sellerId)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (resultMessage.startsWith("PAGO APROBADO")) {
-                    Color(0xFFD8F5D0)
+        OffPayCard(
+            title = "Validar pago",
+            subtitle = "Usa el escáner o pega manualmente el JSON del QR."
+        ) {
+            OffPayPrimaryButton(
+                text = "Escanear QR",
+                onClick = { scanQr() },
+                enabled = !loading
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            OutlinedTextField(
+                value = qrJsonText,
+                onValueChange = { qrJsonText = it },
+                label = { Text("JSON del QR") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp),
+                shape = RoundedCornerShape(16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            OffPayPrimaryButton(
+                text = if (loading) "Validando..." else "Validar pago",
+                onClick = { validatePaymentPackage() },
+                enabled = !loading
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        val resultColor = if (resultMessage.startsWith("PAGO APROBADO")) OffPaySoftGreen else Color(0xFFF9FAFB)
+        OffPayCard(
+            title = "Resultado",
+            containerColor = resultColor
+        ) {
+            Text(resultMessage)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OffPayCard(
+            title = "Respuesta del backend",
+            subtitle = "Información técnica para depuración"
+        ) {
+            Text(
+                if (rawResponse.isBlank()) {
+                    "Todavía no hay respuesta."
                 } else {
-                    Color(0xFFF5F5F5)
+                    rawResponse
                 }
             )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Resultado", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(resultMessage)
-            }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Respuesta cruda del backend", fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    if (rawResponse.isBlank()) {
-                        "Todavía no hay respuesta."
-                    } else {
-                        rawResponse
-                    }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Volver")
-        }
+        OffPaySecondaryButton(
+            text = "Volver",
+            onClick = onBack
+        )
     }
 }
 @Composable
@@ -1802,108 +2035,80 @@ fun ConfigScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.Center
+    OffPayPage(
+        title = "Configuración",
+        subtitle = "Ajusta la conexión del backend y los IDs demo."
     ) {
-        Text(
-            text = "Configuración",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
+        OffPayCard(
+            title = "Conexión del sistema",
+            subtitle = "Estos datos se guardan localmente en el teléfono."
+        ) {
+            OutlinedTextField(
+                value = backendUrl,
+                onValueChange = { backendUrl = it },
+                label = { Text("Backend URL") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
 
-        Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-        Text(
-            text = "Aquí puedes guardar la URL del backend y los IDs de prueba.",
-            style = MaterialTheme.typography.bodyLarge
-        )
+            OutlinedTextField(
+                value = clientId,
+                onValueChange = { clientId = it },
+                label = { Text("Client ID") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
 
-        Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-        OutlinedTextField(
-            value = backendUrl,
-            onValueChange = { backendUrl = it },
-            label = { Text("Backend URL") },
-            modifier = Modifier.fillMaxWidth()
-        )
+            OutlinedTextField(
+                value = sellerId,
+                onValueChange = { sellerId = it },
+                label = { Text("Seller ID") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            OffPaySecondaryButton(
+                text = if (loading) "Probando..." else "Probar conexión",
+                onClick = { testConnection() },
+                enabled = !loading
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        OutlinedTextField(
-            value = clientId,
-            onValueChange = { clientId = it },
-            label = { Text("Client ID") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = sellerId,
-            onValueChange = { sellerId = it },
-            label = { Text("Seller ID") },
-            modifier = Modifier.fillMaxWidth()
-        )
+        val statusBg = if (connectionStatus.startsWith("Conexión exitosa")) OffPaySoftGreen else Color(0xFFF9FAFB)
+        OffPayCard(
+            title = "Estado",
+            containerColor = statusBg
+        ) {
+            Text(connectionStatus)
+        }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Button(
-            onClick = { testConnection() },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (loading) "Probando..." else "Probar conexión")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (connectionStatus.startsWith("Conexión exitosa")) {
-                    Color(0xFFD8F5D0)
-                } else {
-                    Color(0xFFF5F5F5)
-                }
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Estado",
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(connectionStatus)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
+        OffPayPrimaryButton(
+            text = "Guardar configuración",
             onClick = {
                 onSave(
                     backendUrl.trim(),
                     clientId.trim(),
                     sellerId.trim()
                 )
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Guardar")
-        }
+            }
+        )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        Button(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Volver")
-        }
+        OffPaySecondaryButton(
+            text = "Volver",
+            onClick = onBack
+        )
     }
 }
 
@@ -1913,39 +2118,23 @@ fun SimpleScreen(
     description: String,
     onBack: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center
+    OffPayPage(
+        title = title,
+        subtitle = description
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors()
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
+        OffPayCard(title = title) {
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(0xFF101828)
+            )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        Button(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Volver")
-        }
+        OffPaySecondaryButton(
+            text = "Volver",
+            onClick = onBack
+        )
     }
 }
